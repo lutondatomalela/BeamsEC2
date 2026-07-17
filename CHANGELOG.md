@@ -1,17 +1,31 @@
 # Changelog
 
+## v0.1.2
+
+- adicionada distribuição executável portátil para Windows de 64 bits;
+- adicionada configuração PyInstaller sem janela de terminal;
+- adicionados metadados de versão ao executável;
+- adicionada compilação local através de `build_windows.bat`;
+- adicionada compilação automática através de GitHub Actions;
+- publicação automática do executável e do pacote ZIP em GitHub Releases quando é enviada uma etiqueta de versão;
+- incluídos testes internos antes de cada compilação;
+- actualizadas as instruções de instalação e distribuição;
+- mantido o núcleo de cálculo validado da v0.1.1.
+
 ## v0.1.1
 
-- Corrigida a importação de tabelas UTF-16, UTF-8 com BOM, Windows-1252 e Latin-1.
-- Adicionado reconhecimento automático dos separadores tabulação, ponto e vírgula, vírgula e barra vertical.
-- O tipo real do ficheiro é agora detectado pela assinatura, evitando tratar tabelas de texto como livros de cálculo apenas por causa da extensão.
-- Corrigida a cadeia da interface que regressava às rotinas base durante a importação.
-- Restabelecida a identificação automática de secções I simétricas e assimétricas através de AX, IY, IZ, VZ e VPZ.
-- Adicionados testes de regressão específicos para importação e identificação geométrica.
+- corrigida a importação de tabelas UTF-16 e de ficheiros com extensão diferente do formato real;
+- adicionada detecção robusta de codificação e separador;
+- corrigida a passagem das propriedades geométricas entre a interface e o módulo de identificação de secções;
+- restabelecida a identificação automática de secções I simétricas e assimétricas;
+- adicionados testes de regressão para importação e geometria.
 
 ## v0.1
 
-- Primeira versão pública modular.
-- Interface e instruções revistas.
-- Terminologia independente do programa de origem das tabelas.
-- Dimensionamento ELU e ELS, secções rectangulares, T e I, relatórios e memória de cálculo.
+- primeira versão pública;
+- código separado por domínio funcional;
+- interface e instruções revistas;
+- relatórios e memória de cálculo limpos para publicação;
+- suporte a secções rectangulares, T e I;
+- verificações ELU e ELS;
+- testes internos de sanidade.
