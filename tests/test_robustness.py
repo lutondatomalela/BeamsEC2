@@ -166,6 +166,17 @@ class ServiceabilityTests(unittest.TestCase):
 
 
 class ReportingTests(unittest.TestCase):
+    def test_selftest_on_cp1252_console(self):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+        result = subprocess.run([sys.executable, "selftest.py"],
+                                cwd=Path(__file__).resolve().parents[1],
+                                env={**os.environ, "PYTHONIOENCODING": "cp1252:strict"},
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="replace"))
+
     def test_summary_does_not_hide_review_or_mix_cases(self):
         from beams_ec2.base import build_summary_by_member
         rows = pd.DataFrame([

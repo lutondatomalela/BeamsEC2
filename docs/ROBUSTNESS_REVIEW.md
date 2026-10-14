@@ -37,7 +37,7 @@ Os documentos normativos fornecidos pelo utilizador não são redistribuídos no
 
 ## Verificação executada
 
-- 27 testes automatizados de regressão adicionais, com subcasos de dados inválidos.
+- 28 testes automatizados de regressão adicionais, com subcasos de dados inválidos.
 - 10 verificações internas já existentes.
 - Exportação XLSX pela cadeia final da aplicação, reabertura e confirmação das folhas de resultados, corte/torção, geometria, ELS e pormenorização.
 - Compilação sintática dos módulos e controlo de espaços do diff.

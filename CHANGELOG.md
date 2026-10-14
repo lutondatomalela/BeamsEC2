@@ -8,7 +8,7 @@
 - Todas as combinações conservadas; resumos sem mistura de casos e sem ocultação de Verificar.
 - Estações ELS em metros, sem reescala nem média de momentos conflitantes.
 - Exportação XLSX com erros de folhas adicionais explícitos.
-- 27 testes de regressão adicionais e CI Windows/Linux.
+- 28 testes de regressão adicionais e CI Windows/Linux.
 - Avaliação técnica e limitações em docs/ROBUSTNESS_REVIEW.md.
 
 # Changelog

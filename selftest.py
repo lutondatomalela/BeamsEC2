@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import tempfile
+import sys
 
 import pandas as pd
 
@@ -88,6 +89,9 @@ def _public_regression_tests() -> pd.DataFrame:
 
 
 def main():
+    # Windows redirected consoles may use cp1252, without engineering symbols.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
     results = pd.concat([_internal_tests_advanced(), _public_regression_tests()], ignore_index=True)
     print(results.to_string(index=False))
     failed = results[results["Estado"] != "OK"]
