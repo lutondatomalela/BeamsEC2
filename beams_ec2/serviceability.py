@@ -340,46 +340,24 @@ def _service_group_serviceability(app, r: pd.Series, target: str):
 
 
 def _moment_diagram_serviceability(group: pd.DataFrame, length_m: float, moment_col: str):
+    """Station (m) is dimensional. Never stretch partial diagrams to a full span."""
     import numpy as np
-    if group is None or group.empty:
-        return np.array([]), np.array([]), "Insuficiente", ""
-    g = group.sort_values("__row_order").copy()
-    L = max(float(length_m), 1e-6)
-    m = np.array([finite(v, 0.0) for v in g.get(moment_col, pd.Series([0.0] * len(g)))], dtype=float)
-    st = np.array([safe_float(v, float("nan")) for v in g.get("station", pd.Series([float("nan")] * len(g)))], dtype=float)
-    source = "estações importadas"
-    finite_mask = np.isfinite(st)
-    if finite_mask.sum() >= 2:
-        stf = st[finite_mask]
-        mf = m[finite_mask]
-        order = np.argsort(stf)
-        stf, mf = stf[order], mf[order]
-        if stf.max() <= 1.001 and L > 1.5:
-            stf = stf * L
-            source = "estações normalizadas 0-1"
-        else:
-            stf = stf - stf.min()
-        if stf.max() > L * 1.10 or stf.max() <= 1e-9:
-            stf = np.linspace(0.0, L, len(mf))
-            source = "ordem das linhas distribuída no vão"
-        else:
-            if stf.max() < L * 0.95:
-                stf = stf * (L / max(stf.max(), 1e-9))
-                source += "; ajustadas ao comprimento"
-        x, M = stf, mf
-    else:
-        x = np.linspace(0.0, L, len(m))
-        M = m
-        source = "ordem das linhas distribuída no vão"
-    if len(x) == 0:
-        return x, M, "Insuficiente", source
-    unique = {}
-    for xx, mm in zip(x, M):
-        unique.setdefault(round(float(xx), 9), []).append(float(mm))
-    x = np.array(sorted(unique.keys()), dtype=float)
-    M = np.array([sum(unique[xx]) / len(unique[xx]) for xx in x], dtype=float)
-    quality = "Adequado" if len(x) >= 5 else ("Aceitável" if len(x) >= 3 else "Insuficiente")
-    return x, M, quality, source
+    empty = np.array([])
+    if group is None or group.empty or moment_col not in group or "station" not in group:
+        return empty, empty, "Insuficiente", "estações ou momentos em falta"
+    g = group[["station", moment_col]].copy()
+    if not np.isfinite(g.to_numpy(dtype=float)).all():
+        return empty, empty, "Insuficiente", "valores não finitos"
+    for _, part in g.groupby("station"):
+        if part[moment_col].max() - part[moment_col].min() > 1e-8:
+            return empty, empty, "Insuficiente", "momentos diferentes na mesma estação"
+    g = g.drop_duplicates("station").sort_values("station")
+    x, M = g.station.to_numpy(dtype=float), g[moment_col].to_numpy(dtype=float)
+    L = float(length_m)
+    if len(x) < 2 or abs(x[0]) > 1e-8 or abs(x[-1] - L) > 1e-8:
+        return empty, empty, "Insuficiente", "diagrama não cobre 0 a L; estações em metros"
+    quality = "Adequado" if len(x) >= 5 else "Aceitável" if len(x) >= 3 else "Insuficiente"
+    return x, M, quality, "estações importadas em metros; sem reescala"
 
 
 def _calculate_member_sls_serviceability(app, r: pd.Series, group: pd.DataFrame, case_label: str, source_note: str, params: SLSParametersServiceability):
@@ -897,8 +875,8 @@ def _write_excel_serviceability(self, path: str):
         wb.properties.creator = ""
         wb.properties.lastModifiedBy = ""
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 BeamsEC2App._write_excel = _write_excel_serviceability
 

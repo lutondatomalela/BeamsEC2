@@ -149,7 +149,7 @@ def _metadata_df_reporting(self) -> pd.DataFrame:
         ["Ficheiro de origem", self.input_file_path or "-"],
         ["Suporte normativo", NORMATIVE_SUPPORT_EXTENDED],
         ["Âmbito", "Dimensionamento/verificação ELU e ELS expedito de vigas de betão armado"],
-        ["Critério de torção", f"Armadura específica apenas se TEd/TRd,max >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
+        ["Critério de torção", f"Torção de equilíbrio: armadura para TEd > 0; limiar = {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25"],
         ["Diâmetros de estribos", "Ø6, Ø8, Ø10; mínimo 2 ramos"],
         ["Descrição", APP_TABLE_DESCRIPTION],
@@ -613,7 +613,8 @@ def _shear_requirements_calculation(self, VEd_kN: float, bw: float, d: float, As
     V = abs(float(VEd_kN or 0.0)) * 1000.0
     z = 0.9 * d
     nu1 = 0.6 * (1.0 - fck / 250.0)
-    cot, VRdmax = _auto_cot_for_shear_calculation(V, bw, z, nu1, fcd)
+    cot = self.cot_theta
+    VRdmax = bw * z * nu1 * fcd / (cot + 1.0 / cot)
     vrdc = self.vrd_c(VEd_kN, bw, d, Asl, fck, fcd)
     VRdc_N = vrdc["VRd_c_kN"] * 1000.0
     if V <= VRdc_N + 1e-9:
@@ -635,72 +636,15 @@ def _shear_requirements_calculation(self, VEd_kN: float, bw: float, d: float, As
         "shear_status": status,
         "cot_theta": cot,
         "cot_theta_shear": cot,
-        "cot_theta_source": "calculado automaticamente no intervalo 1.0 <= cotθ <= 2.5",
+        "cot_theta_source": "inclinação comum a corte e torção",
     }
 
 
 BeamDesigner.shear_requirements = _shear_requirements_calculation
 
 
-def _torsion_requirements_calculation(self, TEd_kNm: float, section: BeamSection, fck: float, fcd: float, fyd: float) -> Dict[str, float | str]:
-    T = abs(float(TEd_kNm or 0.0)) * 1e6
-    b = section.bw_mm
-    h = section.h_mm
-    if b <= 0 or h <= 0:
-        return {
-            "TRd_max_kNm": None,
-            "Asw_s_torsion_req_mm2_per_mm": 0.0,
-            "Asl_torsion_req_mm2": 0.0,
-            "torsion_status": "Dados insuficientes",
-            "torsion_considered": "Não",
-            "eta_torsion_design": 0.0,
-            "cot_theta_torsion": None,
-            "tef_mm": None,
-            "Ak_mm2": None,
-            "uk_mm": None,
-        }
-    A = b * h
-    u = 2.0 * (b + h)
-    tef = max(A / max(u, 1e-9), 2.0 * self.cover_mm, 50.0)
-    tef = min(tef, min(b, h) / 2.0 - 1.0)
-    Ak = max((b - tef) * (h - tef), 1.0)
-    uk = 2.0 * max(b + h - 2.0 * tef, 1.0)
-    nu1 = 0.6 * (1.0 - fck / 250.0)
-    cot, TRdmax, Asw_s_auto, Asl_auto = _auto_cot_for_torsion_calculation(T, Ak, tef, uk, nu1, fcd, fyd)
-    TRdmax_kNm = TRdmax / 1e6
-    eta = (T / max(TRdmax, 1e-9)) if T > 0 else 0.0
-    if T <= 1e-9:
-        status = "Sem torção relevante"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif eta < TORSION_RELEVANCE_ETA_Detailing:
-        status = f"Sem torção relevante (ηT={eta:.3f} < {TORSION_RELEVANCE_ETA_Detailing:.2f})"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif T <= TRdmax + 1e-9:
-        status = "Requer verificação/armadura de torção"
-        considered = "Sim"
-        Asw_s = Asw_s_auto
-        Asl = Asl_auto
-    else:
-        status = "Não conforme: TEd > TRd,max"
-        considered = "Sim"
-        Asw_s = Asw_s_auto
-        Asl = Asl_auto
-    return {
-        "TRd_max_kNm": TRdmax_kNm,
-        "Asw_s_torsion_req_mm2_per_mm": Asw_s,
-        "Asl_torsion_req_mm2": Asl,
-        "torsion_status": status,
-        "torsion_considered": considered,
-        "eta_torsion_design": eta,
-        "cot_theta_torsion": cot,
-        "tef_mm": tef,
-        "Ak_mm2": Ak,
-        "uk_mm": uk,
-    }
+def _torsion_requirements_calculation(self, TEd_kNm, section, fck, fcd, fyd):
+    return _torsion_requirements_detailing(self, TEd_kNm, section, fck, fcd, fyd)
 
 
 BeamDesigner.torsion_requirements = _torsion_requirements_calculation
@@ -875,7 +819,7 @@ def _vt_audit_df_calculation(results: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     df = results.copy()
     df["viga"] = df.apply(_beam_label_calculation, axis=1)
-    cols = ["viga","case","story","v_ed_kN","v_at","VRd_c_kN","VRd_max_kN","cot_theta_shear","eta_shear_max","Asw_s_shear_req_mm2_per_m","Asw_s_min_mm2_per_m","t_ed_kNm","t_at","TRd_max_kNm","cot_theta_torsion","eta_torsion_max","eta_torsion_design","torsion_considered","Asw_s_torsion_req_mm2_per_m","Asl_torsion_req_mm2","Asw_s_total_req_mm2_per_m","phi_st_mm","stirrup_legs","s_st_mm","Asw_s_prov_mm2_per_m","shear_status","torsion_status","stirrup_status"]
+    cols = ["viga","case","story","v_ed_kN","v_at","VRd_c_kN","VRd_max_kN","cot_theta_shear","eta_shear_max","Asw_s_shear_req_mm2_per_m","Asw_s_min_mm2_per_m","t_ed_kNm","t_at","TRd_max_kNm","cot_theta_torsion","eta_torsion_max","eta_vt","eta_torsion_design","torsion_considered","Asw_s_torsion_req_mm2_per_m","Asl_torsion_req_mm2","Asw_s_total_req_mm2_per_m","phi_st_mm","stirrup_legs","s_st_mm","Asw_s_prov_mm2_per_m","shear_status","torsion_status","stirrup_status"]
     return df[[c for c in cols if c in df.columns]].copy()
 
 
@@ -1294,8 +1238,8 @@ def _write_excel_calculation(self, path: str):
                         ws.delete_rows(row, 1)
                         break
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 
 BeamsEC2App._write_excel = _write_excel_calculation

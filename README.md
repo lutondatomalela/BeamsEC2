@@ -2,7 +2,7 @@
 
 Aplicação desktop para o dimensionamento e a verificação de vigas de betão armado segundo a **NP EN 1992-1-1**.
 
-A versão pública actual é a **v0.1.2**. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
+O código-fonte nesta branch corresponde à **v0.2.0-rc1**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
 
 ## Instalação para utilizadores
 
@@ -114,25 +114,16 @@ python BeamsEC2.py
 
 ```bash
 python selftest.py
+python -m unittest discover -s tests -v
 ```
 
 Os testes incluem verificações de cálculo, importação UTF-16, preservação das propriedades geométricas e identificação de secções I assimétricas pela cadeia utilizada na interface.
 
-## Compilação do executável Windows
+## Validação automática
 
-A compilação está automatizada por GitHub Actions através de:
+O workflow `.github/workflows/validation.yml` executa os testes em Windows e Linux, com Python 3.10 e 3.12. Esta versão candidata ainda não inclui um novo executável Windows.
 
-```text
-.github/workflows/build-windows.yml
-```
-
-Também pode ser efectuada localmente, em Windows, executando por duplo clique:
-
-```text
-build_windows.bat
-```
-
-As instruções completas estão em [BUILD_WINDOWS.md](BUILD_WINDOWS.md).
+As estações são expressas em metros. Os diagramas ELS devem cobrir 0 a L; diagramas parciais não são reescalados. Todas as combinações ELU são conservadas para as verificações acopladas.
 
 ## Estrutura do projecto
 
@@ -149,10 +140,7 @@ beams_ec2/
   release.py                 configuração pública da v0.1.2
 selftest.py                  testes internos e de regressão
 table_template.xlsx          tabela-tipo de entrada
-BeamsEC2.spec                configuração do executável
-build_windows.bat            compilação local em Windows
 requirements.txt             dependências da aplicação
-requirements-build.txt       dependências de compilação
 ```
 
 ## Âmbito e responsabilidade

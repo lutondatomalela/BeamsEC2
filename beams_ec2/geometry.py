@@ -56,6 +56,8 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 _build_beam_envelopes_full_reports = build_beam_envelopes
 
 def build_beam_envelopes(df: pd.DataFrame, moment_axis="my", shear_axis="fz", torsion_axis="mx") -> pd.DataFrame:
+    from .validation import validate_table
+    validate_table(df, moment_axis, shear_axis, torsion_axis)
     env = _build_beam_envelopes_full_reports(df, moment_axis=moment_axis, shear_axis=shear_axis, torsion_axis=torsion_axis)
     if env is None or env.empty or df is None or df.empty:
         return env
@@ -64,6 +66,10 @@ def build_beam_envelopes(df: pd.DataFrame, moment_axis="my", shear_axis="fz", to
     keep = group_cols + [c for c in _EXTRA_GEOM_Geometry if c in first.columns]
     first = first[keep]
     env = env.merge(first, on=group_cols, how="left", suffixes=("", "_geom"))
+    other_moment = "mz" if moment_axis == "my" else "my"
+    if other_moment in df:
+        biaxial = df.groupby(group_cols, dropna=False)[other_moment].agg(lambda x: x.abs().max()).reset_index()
+        env = env.merge(biaxial.rename(columns={other_moment: "biaxial_m_ed_kNm"}), on=group_cols, how="left")
     # A classificação é visível já no separador Envelopes, antes do cálculo.
     types=[]; summaries=[]; sources=[]; confidences=[]; errors=[]; notes=[]
     for _, rr in env.iterrows():
@@ -455,6 +461,10 @@ def _detailing_profile_geometry(self, section, bot, top, stir):
 
 
 def _design_one_geometry(self, row: pd.Series) -> Dict:
+    for key in ("m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm"):
+        value = safe_float(row.get(key))
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"Esforço de envelope inválido: {key}")
     material=str(row.get("material",DEFAULT_CONCRETE_CLASS) or DEFAULT_CONCRETE_CLASS)
     fck=parse_concrete_strength(material)
     cp=concrete_props(fck,alpha_cc=self.alpha_cc,gamma_c=self.gamma_c)
@@ -504,12 +514,16 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     Mrd_neg=self.flexural_capacity(top.area_mm2,bot.area_mm2,section_neg,d_top,d2_bot,cp["fcd"],fyd)
     eta_pos=Mpos/max(finite(Mrd_pos.get("MRd_kNm")),1e-9) if Mpos>0 else 0.0
     eta_neg=Mneg/max(finite(Mrd_neg.get("MRd_kNm")),1e-9) if Mneg>0 else 0.0
-    shear=self.shear_requirements(VEd,bw,min(d_bot,d_top),max(bot.area_mm2,top.area_mm2),fck,cp["fcd"],fyd)
+    shear=self.shear_requirements(VEd,bw,min(d_bot,d_top),min(bot.area_mm2,top.area_mm2),fck,cp["fcd"],fyd)
     Asw_total=max(float(shear["Asw_s_min_mm2_per_mm"]),float(shear["Asw_s_shear_req_mm2_per_mm"]))+float(tors.get("Asw_s_torsion_req_mm2_per_mm") or 0.0)
     stir=self.choose_stirrups(Asw_total,bw,h,min(d_bot,d_top),torsion=torsion_active)
     els=self.serviceability(row,bot.area_mm2,top.area_mm2,d_bot,d_top,section,cp)
     det=_detailing_profile_geometry(self,section,bot,top,stir)
     failures=[]
+    eta_vt = (abs(VEd) / max(finite(shear.get("VRd_max_kN")), 1e-9)
+              + abs(TEd) / max(finite(tors.get("TRd_max_kNm")), 1e-9))
+    if eta_vt > 1.0 + 1e-6:
+        failures.append("interação corte/torção não verifica (EC2 6.29)")
     if bot.status!="OK" or top.status!="OK": failures.append("armadura longitudinal não cabe na geometria real")
     if eta_pos>1.0+1e-6: failures.append("flexão positiva não verifica")
     if eta_neg>1.0+1e-6: failures.append("flexão negativa não verifica")
@@ -570,6 +584,32 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
         "shortlist_text":f"Inf {bot.label} ({getattr(bot,'layout','')}); Sup {top.label} ({getattr(top,'layout','')}); geometria {section.geometry_summary}",
     }
     out["beam_ref"]=_beam_label_labels(out)
+    out["eta_vt"] = eta_vt
+    out["eta_global"] = max(out["eta_global"], eta_vt)
+    out["torsion_relevance_limit"] = 0.0
+    out["flexure_method"] = "EC2 6.1: compatibilidade de extensões e equilíbrio N=0 (fck <= 50 MPa)"
+    reviews = []
+    if str(row.get("moment_axis", "MY")).upper() != "MY" or str(row.get("shear_axis", "FZ")).upper() != "FZ":
+        reviews.append("eixos alternativos: confirmar rotação da geometria HY/HZ; não validada automaticamente")
+    if fck > 50:
+        reviews.append("betão de alta resistência: bloco e extensões específicos não validados")
+    if abs(finite(row.get("n_ed_kN"))) > 1e-8:
+        reviews.append("esforço normal presente: interação N-M não implementada")
+    if abs(finite(row.get("biaxial_m_ed_kNm"))) > 1e-8:
+        reviews.append("flexão biaxial presente: interação My-Mz não implementada")
+    if row.get("material_source") == "fallback":
+        reviews.append("classe de betão em falta; confirmar C30/37 assumido")
+    if section.confidence == "Baixa" and any(finite(row.get(c)) > 0 for c in ("ax", "iy", "iz")):
+        reviews.append("propriedades importadas incompatíveis com a geometria rectangular assumida")
+    if finite(stir.get("phi_st_mm")) > 8:
+        reviews.append("recalcular posições dos varões com o diâmetro real do estribo")
+    if torsion_active:
+        reviews.append("confirmar distribuição da armadura longitudinal de torção e sua sobreposição com flexão")
+    if reviews:
+        if out["status"] == "OK":
+            out["status"] = "Verificar"
+        out["recommendations"] = "; ".join(reviews)
+        out["failure_reason"] = "; ".join(x for x in (out["failure_reason"], out["recommendations"]) if x)
     return out
 
 BeamDesigner.design_one = _design_one_geometry
@@ -775,8 +815,8 @@ def _write_excel_geometry(self, path: str):
             vals=[str(ws.cell(i,j).value) for i in range(1,min(ws.max_row,200)+1) if ws.cell(i,j).value is not None]
             ws.column_dimensions[get_column_letter(j)].width=min(max([len(v) for v in vals]+[10])+2,45)
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 BeamsEC2App._write_excel = _write_excel_geometry
 

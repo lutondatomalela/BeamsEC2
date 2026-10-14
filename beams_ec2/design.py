@@ -36,18 +36,31 @@ def _fmt_report_base(value, digits=2, empty="-"):
 def _flexural_capacity_report_base(self, As_tens: float, As_comp: float, section: BeamSection, d_mm: float, d2_mm: float, fcd: float, fyd: float) -> Dict[str, float]:
     if As_tens <= 0 or d_mm <= 0:
         return {"MRd_kNm": 0.0, "x_mm": 0.0, "z_mm": 0.0, "capacity_note": "sem armadura traccionada"}
-    T = max(0.0, As_tens) * fyd
-    Cs_yield = max(0.0, As_comp) * fyd
-    Cs_eff = min(Cs_yield, 0.85 * T)
-    Cc_req = max(T - Cs_eff, 0.0)
-    try:
-        a = self.a_for_concrete_force(Cc_req, section, fcd)
-        Cc, y = self.compression_block(a, section, fcd)
-    except Exception:
-        return {"MRd_kNm": 0.0, "x_mm": None, "z_mm": None, "capacity_note": "compressão de betão insuficiente"}
-    M = Cc * max(d_mm - y, 0.0) + Cs_eff * max(d_mm - d2_mm, 0.0)
-    note = "OK" if Cs_yield <= Cs_eff + 1e-6 else "aço comprimido limitado por equilíbrio"
-    return {"MRd_kNm": M / 1e6, "x_mm": a / 0.8 if a else 0.0, "z_mm": d_mm - y, "capacity_note": note}
+    if not 0 < d2_mm < d_mm <= section.h_mm:
+        raise ValueError("Posições de armadura incompatíveis com a secção.")
+    # EC2 6.1: plane sections, eps_cu3=3.5 per mille (C12/15--C50/60).
+    # Steel in the opposite face may be in tension; its sign follows strain.
+    def state(x):
+        Cc, y = self.compression_block(0.8 * x, section, fcd)
+        sigma_t = max(-fyd, min(fyd, 200000.0 * 0.0035 * (d_mm - x) / x))
+        sigma_c = max(-fyd, min(fyd, 200000.0 * 0.0035 * (x - d2_mm) / x))
+        T = As_tens * sigma_t
+        Cs = max(As_comp, 0.0) * sigma_c
+        return Cc + Cs - T, Cc, y, Cs, sigma_t, sigma_c
+    lo, hi = 1e-8, d_mm
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if state(mid)[0] < 0:
+            lo = mid
+        else:
+            hi = mid
+    x = (lo + hi) / 2.0
+    residual, Cc, y, Cs, sigma_t, sigma_c = state(x)
+    M = Cc * (d_mm - y) + Cs * (d_mm - d2_mm)
+    return {"MRd_kNm": max(M, 0.0) / 1e6, "x_mm": x, "z_mm": d_mm - y,
+            "sigma_t_MPa": sigma_t, "sigma_c_MPa": sigma_c,
+            "equilibrium_residual_N": residual,
+            "capacity_note": "compatibilidade de extensões; equilíbrio N=0"}
 
 BeamDesigner.flexural_capacity = _flexural_capacity_report_base
 
@@ -972,7 +985,7 @@ MAIN_LONG_DIAMS_Detailing = [12.0, 16.0, 20.0, 25.0]
 SKIN_DIAMS_Detailing = [10.0, 12.0, 16.0]
 STIRRUP_DIAMS_Detailing = [6.0, 8.0, 10.0]
 STIRRUP_LEGS_Detailing = [2, 4, 6]
-TORSION_RELEVANCE_ETA_Detailing = 0.05  # abaixo deste valor TEd/TRd,max não se dimensiona armadura específica de torção
+TORSION_RELEVANCE_ETA_Detailing = 0.0  # abaixo deste valor TEd/TRd,max não se dimensiona armadura específica de torção
 MAX_MAIN_LAYERS_Detailing = 2
 
 
@@ -1087,68 +1100,38 @@ def _choose_longitudinal_bars_detailing(self, As_req: float, b_mm: float, prefer
 BeamDesigner.choose_longitudinal_bars = _choose_longitudinal_bars_detailing
 
 
-def _torsion_requirements_detailing(self, TEd_kNm: float, section: BeamSection, fck: float, fcd: float, fyd: float) -> Dict[str, float | str]:
-    """Torção EC2 com limiar de relevância para evitar armadura específica para torções residuais.
+def _torsion_requirements_detailing(self, TEd_kNm, section, fck, fcd, fyd):
+    """EC2 6.3: all nonzero torsion treated as equilibrium torsion.
 
-    O programa calcula sempre TRd,max para auditoria, mas só dimensiona armadura específica
-    quando TEd/TRd,max excede o limiar definido em TORSION_RELEVANCE_ETA_Detailing.
+    Asw is expressed as total area of TWO closed-stirrup legs per unit length,
+    consistent with the shear selector. Additional legs cannot replace these.
     """
-    T = abs(float(TEd_kNm or 0.0)) * 1e6
-    b = section.bw_mm
-    h = section.h_mm
-    if b <= 0 or h <= 0:
-        return {
-            "TRd_max_kNm": None,
-            "Asw_s_torsion_req_mm2_per_mm": 0.0,
-            "Asl_torsion_req_mm2": 0.0,
-            "torsion_status": "Dados insuficientes",
-            "torsion_considered": "Não",
-            "eta_torsion_design": 0.0,
-            "tef_mm": None,
-            "Ak_mm2": None,
-            "uk_mm": None,
-        }
-    A = b * h
-    u = 2.0 * (b + h)
-    tef = max(A / max(u, 1e-9), 2.0 * self.cover_mm, 50.0)
-    tef = min(tef, min(b, h) / 2.0 - 1.0)
-    Ak = max((b - tef) * (h - tef), 1.0)
-    uk = 2.0 * max(b + h - 2.0 * tef, 1.0)
-    cot = 1.0
-    nu1 = 0.6 * (1.0 - fck / 250.0)
-    TRdmax = 2.0 * nu1 * fcd * Ak * tef / (cot + 1.0 / cot)
-    TRdmax_kNm = TRdmax / 1e6
-    eta = (T / max(TRdmax, 1e-9)) if T > 0 else 0.0
-    if T <= 1e-9:
-        status = "Sem torção relevante"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif eta < TORSION_RELEVANCE_ETA_Detailing:
-        status = f"Sem torção relevante (ηT={eta:.3f} < {TORSION_RELEVANCE_ETA_Detailing:.2f})"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif T <= TRdmax:
-        status = "Requer verificação/armadura de torção"
-        considered = "Sim"
-        Asw_s = T / max(2.0 * Ak * fyd * cot, 1e-9)
-        Asl = T * uk * cot / max(2.0 * Ak * fyd, 1e-9)
-    else:
-        status = "Não conforme: TEd > TRd,max"
-        considered = "Sim"
-        Asw_s = T / max(2.0 * Ak * fyd * cot, 1e-9)
-        Asl = T * uk * cot / max(2.0 * Ak * fyd, 1e-9)
+    T = abs(float(TEd_kNm)) * 1e6
+    b, h = section.bw_mm, section.h_mm
+    if min(b, h) <= 0:
+        raise ValueError("Geometria inválida para torção.")
+    # A/u is permissible only above twice the longitudinal bar axis distance.
+    axis_distance = self.cover_mm + 12.0 + 25.0 / 2.0
+    tef = max(b * h / (2.0 * (b + h)), 2.0 * axis_distance)
+    if tef >= min(b, h):
+        raise ValueError("Secção insuficiente para o modelo tubular de torção.")
+    Ak = (b - tef) * (h - tef)
+    uk = 2.0 * (b + h - 2.0 * tef)
+    cot = self.cot_theta
+    nu = 0.6 * (1.0 - fck / 250.0)
+    trd = 2.0 * nu * fcd * Ak * tef / (cot + 1.0 / cot)
+    considered = T > 1e-9
     return {
-        "TRd_max_kNm": TRdmax_kNm,
-        "Asw_s_torsion_req_mm2_per_mm": Asw_s,
-        "Asl_torsion_req_mm2": Asl,
-        "torsion_status": status,
-        "torsion_considered": considered,
-        "eta_torsion_design": eta,
-        "tef_mm": tef,
-        "Ak_mm2": Ak,
-        "uk_mm": uk,
+        "TRd_max_kNm": trd / 1e6,
+        "Asw_s_torsion_req_mm2_per_mm": T / (Ak * fyd * cot),
+        "Asl_torsion_req_mm2": T * uk * cot / (2.0 * Ak * fyd),
+        "torsion_status": ("Não conforme: TEd > TRd,max" if T > trd else
+                           "Requer armadura de torção" if considered else "Sem torção"),
+        "torsion_considered": "Sim" if considered else "Não",
+        "eta_torsion_design": T / trd,
+        "cot_theta_torsion": cot, "tef_mm": tef, "Ak_mm2": Ak, "uk_mm": uk,
+        "torsion_geometry_model": "tubo equivalente; dois ramos fechados",
+        "torsion_relevance_limit": 0.0,
     }
 
 
@@ -1163,6 +1146,8 @@ def _choose_stirrups_detailing(self, Asw_s_total: float, b: float, h: float, d: 
     best = None
     for phi in STIRRUP_DIAMS_Detailing:
         for legs in STIRRUP_LEGS_Detailing:
+            if torsion and legs != 2:
+                continue
             if legs < 2:
                 continue
             area = legs * bar_area_mm2(phi)
@@ -1546,7 +1531,7 @@ def _metadata_df_detailing(self) -> pd.DataFrame:
         ["Programa", APP_NAME], ["Versão", APP_VERSION], ["Autor", APP_AUTHOR], ["Repositório", GITHUB_URL],
         ["Data de exportação", datetime.now().strftime("%Y-%m-%d %H:%M")], ["Ficheiro de origem", self.input_file_path or "-"],
         ["Suporte normativo", NORMATIVE_SUPPORT], ["Âmbito", "Dimensionamento/verificação ELU e ELS expedito de vigas de betão armado"],
-        ["Critério de torção", f"Armadura específica apenas se TEd/TRd,max >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
+        ["Critério de torção", f"Torção de equilíbrio: armadura para TEd > 0; limiar = {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25"],
         ["Diâmetros de estribos", "Ø6, Ø8, Ø10; mínimo 2 ramos"],
         ["Descrição", APP_TABLE_DESCRIPTION],

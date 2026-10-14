@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.1"
+APP_VERSION = "v0.2.0-rc1"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -201,6 +201,8 @@ BeamsEC2App._build_instructions_tab = _build_instructions_clean
 def _prepare_input_frames(df: pd.DataFrame, moment_axis="my", shear_axis="fz", torsion_axis="mx"):
     """Executa a cadeia pública completa de limpeza e identificação geométrica."""
     clean = _implementation.clean_dataframe(df)
+    from .validation import validate_table
+    validate_table(clean, moment_axis, shear_axis, torsion_axis)
     envelopes = _implementation.build_beam_envelopes(
         clean,
         moment_axis=moment_axis,
@@ -212,13 +214,14 @@ def _prepare_input_frames(df: pd.DataFrame, moment_axis="my", shear_axis="fz", t
 
 def _load_df_clean(self, df: pd.DataFrame, source: str = ""):
     """Carrega a tabela usando os módulos finais, sem regressar às rotinas base."""
-    self.df_raw = df.copy()
-    self.df_clean, self.df_env = _prepare_input_frames(
+    clean, envelopes = _prepare_input_frames(
         df,
         moment_axis=self.var_moment_axis.get().lower(),
         shear_axis=self.var_shear_axis.get().lower(),
         torsion_axis=self.var_torsion_axis.get().lower(),
     )
+    self.df_raw = df.copy()
+    self.df_clean, self.df_env = clean, envelopes
     self.df_calc_input = pd.DataFrame()
     self.df_results = pd.DataFrame()
     self.df_summary = pd.DataFrame()

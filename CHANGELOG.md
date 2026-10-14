@@ -1,3 +1,16 @@
+# v0.2.0-rc1 - 2026-10-14
+
+- Resistência à flexão com compatibilidade de extensões e equilíbrio de forças.
+- Interação corte/torção (6.29), inclinação comum e área de dois ramos fechados.
+- Torção não nula conservada; modelo conservador da alma para secções I.
+- Validação de esforços, dimensões, estações, material e dados variáveis.
+- Revisão obrigatória para N-M, flexão biaxial, eixos alternativos, betões de alta resistência e pormenorização de torção.
+- Todas as combinações conservadas; resumos sem mistura de casos e sem ocultação de Verificar.
+- Estações ELS em metros, sem reescala nem média de momentos conflitantes.
+- Exportação XLSX com erros de folhas adicionais explícitos.
+- 27 testes de regressão adicionais e CI Windows/Linux.
+- Avaliação técnica e limitações em docs/ROBUSTNESS_REVIEW.md.
+
 # Changelog
 
 ## v0.1.2

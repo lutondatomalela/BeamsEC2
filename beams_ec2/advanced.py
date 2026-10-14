@@ -245,27 +245,11 @@ def _bar_label_area_advanced(label: str) -> float:
 
 def _group_positions_advanced(group: pd.DataFrame, length_m: float):
     import numpy as np
-    g = group.sort_values("__row_order").copy()
-    L = max(float(length_m), 1e-6)
-    st = np.array([safe_float(v, float("nan")) for v in g.get("station", pd.Series([float("nan")] * len(g)))], dtype=float)
-    if np.isfinite(st).sum() >= 2:
-        stf = st.copy()
-        finite_mask = np.isfinite(stf)
-        fallback = np.linspace(0.0, L, len(g))
-        stf[~finite_mask] = fallback[~finite_mask]
-        if np.nanmax(stf) <= 1.001 and L > 1.5:
-            stf = stf * L
-        else:
-            stf = stf - np.nanmin(stf)
-        if np.nanmax(stf) > L * 1.10 or np.nanmax(stf) <= 1e-9:
-            stf = fallback
-        elif np.nanmax(stf) < L * 0.95:
-            stf = stf * (L / max(np.nanmax(stf), 1e-9))
-        x = stf
-    else:
-        x = np.linspace(0.0, L, len(g))
-    order = np.argsort(x)
-    return g.iloc[order].reset_index(drop=True), np.asarray(x)[order]
+    g = group.sort_values("station", kind="stable").reset_index(drop=True)
+    x = g.station.to_numpy(dtype=float)
+    if not np.isfinite(x).all() or (x < 0).any() or (x > length_m + 1e-8).any():
+        raise ValueError("Posições da armadura local inválidas; utilizar metros entre 0 e L.")
+    return g, x
 
 
 def _local_rebar_profiles_advanced(group: pd.DataFrame, length_m: float, r: pd.Series):
@@ -751,44 +735,13 @@ _torsion_requirements_geometry = BeamDesigner.torsion_requirements
 def _torsion_requirements_advanced(self, TEd_kNm, section, fck, fcd, fyd):
     if not isinstance(section, SectionProfileGeometry) or not section.is_i:
         return _torsion_requirements_geometry(self, TEd_kNm, section, fck, fcd, fyd)
-    T = abs(float(TEd_kNm or 0.0))
-    # Preservar o limiar de torção não relevante.
-    proxy_outer = BeamSection(section.outer_width_mm, section.h_mm, 0.0, 0.0)
-    check = _torsion_requirements_geometry(self, T, proxy_outer, fck, fcd, fyd)
-    if str(check.get("torsion_considered", "Não")) != "Sim":
-        check["torsion_geometry_model"] = "secção I subdividida; torção não relevante"
-        return check
-    parts = []
-    if section.top_thickness_mm > 0:
-        parts.append(("banzo superior", section.top_width_mm, section.top_thickness_mm))
-    if section.web_height_mm > 0:
-        parts.append(("alma", section.web_mm, section.web_height_mm))
-    if section.bottom_thickness_mm > 0:
-        parts.append(("banzo inferior", section.bottom_width_mm, section.bottom_thickness_mm))
-    weights = [_rect_torsion_j_advanced(b, h) for _, b, h in parts]
-    sw = sum(weights)
-    if sw <= 0:
-        return _torsion_requirements_geometry(self, T, BeamSection(section.web_mm, section.h_mm, 0.0, 0.0), fck, fcd, fyd)
-    Asw = 0.0
-    Asl = 0.0
-    TRdmax = 0.0
-    details = []
-    for (name, b, h), w in zip(parts, weights):
-        Ti = T * w / sw
-        rr = _torsion_requirements_geometry(self, Ti, BeamSection(b, h, 0.0, 0.0), fck, fcd, fyd)
-        Asw += finite(rr.get("Asw_s_torsion_req_mm2_per_mm"), 0.0)
-        Asl += finite(rr.get("Asl_torsion_req_mm2"), 0.0)
-        TRdmax += finite(rr.get("TRd_max_kNm"), 0.0)
-        details.append(f"{name}:{Ti:.2f} kNm")
-    status = "Requer armadura de torção por subsecções" if T <= TRdmax + 1e-9 else "Não conforme: TEd > soma TRd,max"
-    return {
-        "torsion_considered": "Sim", "torsion_ratio": T / max(TRdmax, 1e-9),
-        "TRd_max_kNm": TRdmax, "Asw_s_torsion_req_mm2_per_mm": Asw,
-        "Asl_torsion_req_mm2": Asl, "torsion_status": status,
-        "tef_mm": None, "Ak_mm2": None, "uk_mm": None,
-        "torsion_geometry_model": "secção I subdividida em banzos e alma; T distribuído por rigidez de Saint-Venant",
-        "torsion_distribution": "; ".join(details),
-    }
+    # Conservative rectangular web model. Summing subsection strengths does
+    # not ensure that the weakest subsection survives the imposed distribution.
+    proxy = BeamSection(section.web_mm, section.h_mm, 0.0, 0.0)
+    result = _torsion_requirements_geometry(self, TEd_kNm, proxy, fck, fcd, fyd)
+    result["torsion_geometry_model"] = "secção I: tubo equivalente limitado à alma; confirmar pormenorização"
+    return result
+
 
 BeamDesigner.torsion_requirements = _torsion_requirements_advanced
 
@@ -1013,7 +966,7 @@ def _run_design_advanced(self):
     if elu_env.empty:
         messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
         return
-    input_df = reduce_to_governing_cases(elu_env) if self.var_reduce_cases.get() else elu_env
+    input_df = elu_env  # Every combination is required for coupled checks.
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
     def progress(done, total):
         pct = 0.0 if total <= 0 else 100.0 * done / total
@@ -1105,8 +1058,8 @@ def _write_excel_advanced(self, path: str):
                 ws.column_dimensions[get_column_letter(j)].width=min(max([len(v) for v in vals]+[10])+2,42)
         wb.properties.title = APP_NAME; wb.properties.creator = ""; wb.properties.lastModifiedBy = ""
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta: folhas adicionais não foram guardadas.") from exc
 
 BeamsEC2App._write_excel = _write_excel_advanced
 
@@ -1144,7 +1097,7 @@ def build_normative_notes_advanced() -> pd.DataFrame:
         ("Condições de apoio", "Compatibilidade cinemática", "A integração da curvatura considera vão entre apoios, consola esquerda/direita ou encastre-encastre; a condição pode ser definida por viga."),
         ("Histórico de carregamento", "NP EN 1992-1-1, Anexo B", "O modo G+Q usa coeficientes de fluência distintos por idade de aplicação e um coeficiente efectivo ponderado pela fracção permanente."),
         ("Pormenorização longitudinal", "NP EN 1992-1-1, 8.4 e 9.2.1.3", "São reportados comprimentos de amarração, decalagem al e perfil de armadura necessária; confirmar nós, emendas e disponibilidade geométrica."),
-        ("Torção em I", "NP EN 1992-1-1, 6.3", "A secção I é subdividida em banzos e alma, distribuindo T pela rigidez de Saint-Venant; rever a pormenorização específica quando a torção for relevante."),
+        ("Torção em I", "NP EN 1992-1-1, 6.3", "Modelo tubular limitado à alma; confirmar a pormenorização. Não se somam resistências de subsecções."),
         ("Validação automática", "Controlo interno", "O workbook inclui testes de integração, propriedades geométricas e sanidade dos modelos de fluência/retracção."),
     ], columns=["Tema", "Referência", "Nota"])
     return pd.concat([notes, extra], ignore_index=True)
@@ -1160,8 +1113,8 @@ def _design_one_advanced(self, row: pd.Series) -> Dict:
     out = _design_one_advanced_base(self, row)
     if str(out.get("section_type", "")).startswith("I"):
         out["torsion_method"] = (
-            "NP EN 1992-1-1:2010, 6.3; secção subdividida em banzos e alma, "
-            "com distribuição de T pela rigidez de Saint-Venant"
+            "NP EN 1992-1-1:2010, 6.3; modelo conservador limitado à alma, "
+            "com confirmação da pormenorização"
         )
         if str(out.get("torsion_considered", "Não")) == "Sim" and out.get("status") == "OK":
             out["status"] = "Verificar"
@@ -1243,7 +1196,7 @@ def _write_pdf_advanced(self, path: str):
         Paragraph("Critérios de cálculo",styles["BodyCourier"]),self._pdf_df_table(self._parameters_df(),["Parâmetro","Valor"],max_rows=None,widths=[90,180]),Spacer(1,5*mm),
         Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(summary),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(summary),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(summary),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","eta_vt","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_status"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Testes internos",styles["BodyCourier"]),self._pdf_df_table(tests,["Teste","Calculado","Referência","Erro relativo","Tolerância","Estado"],max_rows=None),

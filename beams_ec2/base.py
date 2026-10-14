@@ -195,7 +195,7 @@ def rename_known_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = rename_known_columns(df)
+    df = rename_known_columns(df).reset_index(drop=True)
     df["__row_order"] = range(len(df))
 
     numeric_cols = ["fx", "fy", "fz", "mx", "my", "mz", "length", "hy", "hz", "bf", "hf", "station"]
@@ -334,29 +334,8 @@ def build_beam_envelopes(df: pd.DataFrame, moment_axis="my", shear_axis="fz", to
 
 
 def reduce_to_governing_cases(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    work = df.copy()
-    for c in ["m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm", "m_abs_ed_kNm"]:
-        if c not in work.columns:
-            work[c] = 0.0
-    work["_score"] = (
-        work["m_abs_ed_kNm"].abs().fillna(0.0)
-        + 0.45 * work["v_ed_kN"].abs().fillna(0.0)
-        + 0.75 * work["t_ed_kNm"].abs().fillna(0.0)
-    )
-    selected = set()
-    for _, grp in work.groupby(["member", "name", "story"], dropna=False):
-        if grp.empty:
-            continue
-        for col in ["_score", "m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm", "m_abs_ed_kNm"]:
-            selected.add(grp[col].abs().idxmax())
-        els = grp[grp["limit_state"].astype(str).eq("ELS")]
-        if not els.empty:
-            selected.add(els["_score"].idxmax())
-    out = work.loc[sorted(selected)].copy().sort_values(["member", "story", "name", "case"]).reset_index(drop=True)
-    out.drop(columns=[c for c in out.columns if c.startswith("_")], inplace=True, errors="ignore")
-    return out
+    """Retain all cases: separate scalar maxima do not cover coupled failure."""
+    return df.copy().reset_index(drop=True) if df is not None else pd.DataFrame()
 
 
 # ============================================================
@@ -424,6 +403,11 @@ class BeamDesigner:
         deflection_ld_limit=20.0,
         calc_mode="dimensionamento",
     ):
+        values = (cover_mm, agg_mm, fyk, gamma_c, gamma_s, alpha_cc, cot_theta)
+        if not all(math.isfinite(float(v)) and float(v) > 0 for v in values):
+            raise ValueError("Parâmetros de cálculo devem ser positivos e finitos.")
+        if not 1.0 <= float(cot_theta) <= 2.5:
+            raise ValueError("cot(theta) deve estar entre 1,0 e 2,5.")
         self.cover_mm = float(cover_mm)
         self.agg_mm = float(agg_mm)
         self.fyk = float(fyk)
@@ -1006,11 +990,13 @@ def build_summary_by_member(results: pd.DataFrame) -> pd.DataFrame:
     if results is None or results.empty:
         return pd.DataFrame()
     tmp = results.copy()
-    tmp["_eta"] = tmp[[c for c in ["eta_m_pos", "eta_m_neg"] if c in tmp.columns]].max(axis=1).fillna(0.0)
-    tmp["_vt"] = tmp.get("v_ed_kN", pd.Series(0, index=tmp.index)).abs().fillna(0.0) + tmp.get("t_ed_kNm", pd.Series(0, index=tmp.index)).abs().fillna(0.0)
-    tmp = tmp.sort_values(["member", "story", "name", "status", "_eta", "_vt"], ascending=[True, True, True, True, False, False])
-    out = tmp.groupby(["member", "story", "name"], dropna=False, as_index=False).first()
-    out.drop(columns=["_eta", "_vt"], inplace=True, errors="ignore")
+    tmp["_severity"] = tmp["status"].map({"Falha": 0, "Verificar": 1, "OK": 2}).fillna(1)
+    eta_cols = [c for c in ("eta_global", "eta_vt", "eta_m_pos", "eta_m_neg") if c in tmp]
+    tmp["_eta"] = tmp[eta_cols].max(axis=1).fillna(0.0) if eta_cols else 0.0
+    tmp = tmp.sort_values(["_severity", "_eta"], ascending=[True, False], kind="stable")
+    # Keep a complete physical result row; groupby.first can mix cases at NaNs.
+    out = tmp.drop_duplicates(["member", "story", "name"], keep="first").copy()
+    out.drop(columns=["_severity", "_eta"], inplace=True)
     return out
 
 
