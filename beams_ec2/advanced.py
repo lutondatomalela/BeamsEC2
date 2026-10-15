@@ -217,20 +217,11 @@ def _service_groups_advanced(app, r: pd.Series, target: str):
             cand = same
     if cand.empty:
         return [], "viga não encontrada"
-    target = str(target or "").strip()
-    if target and normalize_text(target) not in {"todas", "todos", "all"}:
-        tokens = [t.strip() for t in re.split(r"[;,|]+", target) if t.strip()]
-        selected = []
-        for case, grp in cand.groupby("case", dropna=False, sort=False):
-            cstr = str(case)
-            cnum = str(extract_combination_number(case))
-            if any(cstr == t or cnum == t or normalize_text(t) in normalize_text(cstr) for t in tokens):
-                selected.append((cstr, grp.copy()))
-        return selected, "combinação(ões) indicada(s)"
-    els = cand[cand["case"].map(_case_is_els_serviceability)]
-    if els.empty:
-        return [], "sem combinação ELS identificada"
-    return [(str(case), grp.copy()) for case, grp in els.groupby("case", dropna=False, sort=False)], "todas as combinações ELS reconhecidas"
+    from .combinations import classify_combinations,selections_from_app
+    if 'combination_group' not in cand:
+        cand=classify_combinations(cand,selections_from_app(app))
+    els=cand[cand['combination_group'].isin(['ELS_CAR','ELS_FREQ','ELS_QP'])]
+    return [(str(case),grp.copy()) for case,grp in els.groupby('case',dropna=False,sort=False)], 'grupos ELS selecionados'
 
 
 def _bar_label_area_advanced(label: str) -> float:
@@ -245,27 +236,11 @@ def _bar_label_area_advanced(label: str) -> float:
 
 def _group_positions_advanced(group: pd.DataFrame, length_m: float):
     import numpy as np
-    g = group.sort_values("__row_order").copy()
-    L = max(float(length_m), 1e-6)
-    st = np.array([safe_float(v, float("nan")) for v in g.get("station", pd.Series([float("nan")] * len(g)))], dtype=float)
-    if np.isfinite(st).sum() >= 2:
-        stf = st.copy()
-        finite_mask = np.isfinite(stf)
-        fallback = np.linspace(0.0, L, len(g))
-        stf[~finite_mask] = fallback[~finite_mask]
-        if np.nanmax(stf) <= 1.001 and L > 1.5:
-            stf = stf * L
-        else:
-            stf = stf - np.nanmin(stf)
-        if np.nanmax(stf) > L * 1.10 or np.nanmax(stf) <= 1e-9:
-            stf = fallback
-        elif np.nanmax(stf) < L * 0.95:
-            stf = stf * (L / max(np.nanmax(stf), 1e-9))
-        x = stf
-    else:
-        x = np.linspace(0.0, L, len(g))
-    order = np.argsort(x)
-    return g.iloc[order].reset_index(drop=True), np.asarray(x)[order]
+    g = group.sort_values("station", kind="stable").reset_index(drop=True)
+    x = g.station.to_numpy(dtype=float)
+    if not np.isfinite(x).all() or (x < 0).any() or (x > length_m + 1e-8).any():
+        raise ValueError("Posições da armadura local inválidas; utilizar metros entre 0 e L.")
+    return g, x
 
 
 def _local_rebar_profiles_advanced(group: pd.DataFrame, length_m: float, r: pd.Series):
@@ -303,6 +278,60 @@ def _local_rebar_profiles_advanced(group: pd.DataFrame, length_m: float, r: pd.S
     return x, result
 
 
+def _section_only_sls(app, r, group, case_label, source_note, params,
+                      p, cp, Ecm, Ec_eff, eps_cs, d_bot, d_top, reason):
+    """Check supplied sections without inventing a span diagram or node positions."""
+    moment = str(app.var_moment_axis.get()).lower()
+    states = _section_sls_states_serviceability(
+        p, finite(r.get("as_prov_bot_mm2"), 0), finite(r.get("as_prov_top_mm2"), 0),
+        d_bot, d_top, Ecm, Ec_eff, cp["fctm"], eps_cs)
+    values = []
+    # Uniform adopted cage: repeated moments need only one section calculation.
+    for mm in group[moment].drop_duplicates():
+        face = "bot" if mm >= 0 else "top"
+        response = _local_sls_response_serviceability(
+            mm, states, "long" if params.long_term else "short",
+            params.beta_tension_stiffening if params.long_term else 1.0,
+            cp["fctm"], Ecm, 200000.0, p,
+            _rebar_phi_serviceability(r.get(face + "_rebar", ""), 12.0),
+            finite(r.get(face + "_clear_spacing_mm"), 999.0),
+            finite(r.get("cover_mm"), 35), finite(r.get("phi_st_mm"), 8),
+            params.kt_crack if params.long_term else 0.6, eps_cs)
+        values.append(dict(member=r.get("member", ""), service_case=case_label,
+                           service_regime=params.regime, x_m=float("nan"),
+                           M_service_kNm=float(mm), **response))
+    wk = max(v["wk_mm"] for v in values)
+    ss = max(v["sigma_s_MPa"] for v in values)
+    sc = max(v["sigma_c_MPa"] for v in values)
+    slim = 0.8 * finite(r.get("fyk_MPa"), 500)
+    clim = (0.45 if params.long_term else 0.6) * cp["fck"]
+    result = dict(service_combination=case_label, service_case_source=source_note,
+                  service_regime=params.regime, service_diagram_quality="Insuficiente",
+                  service_diagram_source=reason, service_points_imported=len(group),
+                  service_points_integrated=0, service_wk_est_mm=wk,
+                  service_wk_lim_mm=params.crack_limit_mm, service_sigma_s_MPa=ss,
+                  service_sigma_s_lim_MPa=slim, service_sigma_c_MPa=sc,
+                  service_sigma_c_lim_MPa=clim,
+                  service_crack_status="OK" if wk <= params.crack_limit_mm else "Não verifica",
+                  service_stress_status="OK" if ss <= slim else "Não verifica",
+                  service_concrete_status="OK" if sc <= clim else "Não verifica",
+                  service_deflection_status="Dados insuficientes",
+                  service_status="Dados insuficientes",
+                  service_note="Tensões e fissuração nas secções fornecidas, com armadura uniforme adotada. "
+                  "Flecha não calculada: " + reason + ". Máximos entre secções não demonstrados.")
+    for key in ("instant", "final", "est", "lim"):
+        result["service_deflection_" + key + "_mm"] = float("nan")
+    if any(result[k] == "Não verifica" for k in
+           ("service_crack_status", "service_stress_status", "service_concrete_status")):
+        result["service_status"] = "Não verifica"
+    if "fx" in group and group.fx.abs().max()*1000 > 0.1*p.gross_properties()[0]*cp["fctm"]:
+        for key in ("crack", "stress", "concrete"):
+            result["service_" + key + "_status"] = "Dados insuficientes"
+        result["service_status"] = "Dados insuficientes"
+        result["service_note"] += " Esforço axial relevante: requer verificação N-M."
+    return result, values
+
+
 def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_label: str, source_note: str, params: SLSParametersAdvanced):
     import numpy as np
     p = _profile_from_result_serviceability(r)
@@ -324,7 +353,8 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     moment_col = str(axis_var.get() if axis_var is not None else "MY").lower()
     x_m, M_pts, quality, diagram_source = _moment_diagram_serviceability(group, finite(r.get("length_m"), 0.0), moment_col)
     if len(x_m) < 2:
-        return {"service_status": "Dados insuficientes", "service_note": "Flecha não verificada: diagrama de momentos ELS indisponível.", "service_diagram_quality": "Insuficiente"}, []
+        return _section_only_sls(app, r, group, case_label, source_note, params,
+                                 p, cp, Ecm, Ec_eff, eps_cs, d_bot, d_top, diagram_source)
     L_m = max(finite(r.get("length_m"), 0.0), float(x_m[-1]))
     x_grid_m = np.linspace(0.0, L_m, max(201, 40 * (len(x_m) - 1) + 1))
     M_grid = np.interp(x_grid_m, x_m, M_pts)
@@ -406,17 +436,22 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     status = "OK" if all(v == "OK" for v in checks) else "Não verifica"
     note = "Cálculo por curvaturas com envelope ELS, condição de apoio e efeitos diferidos."
     if quality == "Insuficiente":
+        defl_status = "Dados insuficientes"
         status = "Dados insuficientes"
         note = "Flecha não validada: importar pelo menos 3 estações nesta combinação ELS."
-    elif axial_ratio > 0.10:
+    if axial_ratio > 0.10:
+        crack_status = steel_status = concrete_status = defl_status = "Dados insuficientes"
         status = "Dados insuficientes"
         note = "Esforço axial de serviço relevante; é necessária verificação N-M dedicada."
+    if history['mode']=='duas fases G+Q':
+        note += " Fluência por coeficiente ponderado; não é uma análise incremental com redistribuição."
     # No encastre-encastre, resíduos elevados indicam que o diagrama importado e as
     # condições cinemáticas seleccionadas não são compatíveis.
     residual = residual_final if params.long_term else residual_short
     residual_limit = max(0.25, L_m * 1000.0 / 20000.0)
     if support == "Encastre-encastre" and residual["disp_residual_mm"] > residual_limit and status == "OK":
         status = "Dados insuficientes"
+        defl_status = "Dados insuficientes"
         note = "Diagrama de curvaturas incompatível com encastre-encastre; rever apoios/estações."
     return {
         "service_combination": case_label,
@@ -475,51 +510,46 @@ def _util_advanced(d: Dict, value_key: str, limit_key: str) -> float:
 
 
 def _governing_sls_advanced(items: List[Dict]) -> Dict:
+    from .combinations import GROUPS
     if not items:
-        return {"service_status": "Dados insuficientes", "service_note": "Sem combinações ELS calculadas."}
-    valid = [d for d in items if d.get("service_status") != "Dados insuficientes"]
-    pool = valid or items
-    crack = max(pool, key=lambda d: _util_advanced(d, "service_wk_est_mm", "service_wk_lim_mm"))
-    defl = max(pool, key=lambda d: _util_advanced(d, "service_deflection_est_mm", "service_deflection_lim_mm"))
-    steel = max(pool, key=lambda d: _util_advanced(d, "service_sigma_s_MPa", "service_sigma_s_lim_MPa"))
-    concrete = max(pool, key=lambda d: _util_advanced(d, "service_sigma_c_MPa", "service_sigma_c_lim_MPa"))
-    scored = []
-    for d in pool:
-        scored.append((max(
-            _util_advanced(d, "service_wk_est_mm", "service_wk_lim_mm"),
-            _util_advanced(d, "service_deflection_est_mm", "service_deflection_lim_mm"),
-            _util_advanced(d, "service_sigma_s_MPa", "service_sigma_s_lim_MPa"),
-            _util_advanced(d, "service_sigma_c_MPa", "service_sigma_c_lim_MPa"),
-        ), d))
-    overall = max(scored, key=lambda x: x[0])[1].copy()
-    for prefix, src in [("crack", crack), ("deflection", defl), ("steel", steel), ("concrete", concrete)]:
-        overall[f"service_combination_{prefix}"] = src.get("service_combination", "")
-    # Cada verificação conserva o valor da respectiva combinação governante.
-    for key in ["service_wk_est_mm", "service_wk_lim_mm", "service_crack_status"]:
-        overall[key] = crack.get(key)
-    for key in ["service_deflection_instant_mm", "service_deflection_final_mm", "service_deflection_est_mm", "service_deflection_lim_mm", "service_deflection_limit", "service_deflection_status"]:
-        overall[key] = defl.get(key)
-    for key in ["service_sigma_s_MPa", "service_sigma_s_lim_MPa", "service_stress_status"]:
-        overall[key] = steel.get(key)
-    for key in ["service_sigma_c_MPa", "service_sigma_c_lim_MPa", "service_concrete_status"]:
-        overall[key] = concrete.get(key)
-    combos = [str(d.get("service_combination", "")) for d in items]
-    overall["service_combinations_checked"] = len(items)
-    overall["service_combinations_list"] = "; ".join(combos)
-    overall["service_governing_combination"] = overall.get("service_combination", "")
-    if any(d.get("service_status") == "Não verifica" for d in items):
-        overall["service_status"] = "Não verifica"
-    elif any(d.get("service_status") == "Dados insuficientes" for d in items):
-        overall["service_status"] = "Dados insuficientes"
-    else:
-        overall["service_status"] = "OK"
-    overall["service_note"] = (
-        f"Envelope de {len(items)} combinação(ões) ELS. Governantes: "
-        f"wk={overall.get('service_combination_crack','')}; "
-        f"flecha={overall.get('service_combination_deflection','')}; "
-        f"aço={overall.get('service_combination_steel','')}; "
-        f"betão={overall.get('service_combination_concrete','')}."
-    )
+        return {"service_status":"Dados insuficientes","service_note":"Sem combinações ELS classificadas."}
+    def choose(group,value,limit):
+        candidates=[d for d in items if d.get('service_group')==group and math.isfinite(safe_float(d.get(value)))]
+        return max(candidates,key=lambda d:_util_advanced(d,value,limit)) if candidates else {}
+    crack=choose('ELS_QP','service_wk_est_mm','service_wk_lim_mm')
+    defl=choose('ELS_QP','service_deflection_est_mm','service_deflection_lim_mm')
+    steel=choose('ELS_CAR','service_sigma_s_MPa','service_sigma_s_lim_MPa')
+    concrete=choose('ELS_CAR','service_sigma_c_MPa','service_sigma_c_lim_MPa')
+    creep=choose('ELS_QP','service_sigma_c_MPa','service_sigma_c_lim_MPa')
+    overall=(defl or items[0]).copy()
+    fields={
+      'crack':(crack,['service_wk_est_mm','service_wk_lim_mm','service_crack_status']),
+      'deflection':(defl,['service_deflection_instant_mm','service_deflection_final_mm','service_deflection_est_mm','service_deflection_lim_mm','service_deflection_limit','service_deflection_status']),
+      'steel':(steel,['service_sigma_s_MPa','service_sigma_s_lim_MPa','service_stress_status']),
+      'concrete':(concrete,['service_sigma_c_MPa','service_sigma_c_lim_MPa','service_concrete_status'])}
+    missing=[]
+    for name,(src,keys) in fields.items():
+        overall['service_combination_'+name]=src.get('service_combination','')
+        overall['service_group_'+name]=src.get('service_group','')
+        for key in keys:
+            overall[key]=src.get(key,'Dados insuficientes' if key.endswith('status') else float('nan'))
+        if not src:missing.append('ELS_QP' if name in ('crack','deflection') else 'ELS_CAR')
+    overall['service_creep_sigma_c_MPa']=creep.get('service_sigma_c_MPa',float('nan'))
+    overall['service_creep_sigma_c_lim_MPa']=creep.get('service_sigma_c_lim_MPa',float('nan'))
+    overall['service_creep_status']=creep.get('service_creep_status','Dados insuficientes')
+    overall['service_combination_creep']=creep.get('service_combination','')
+    overall['service_combinations_checked']=len(items)
+    overall['service_combinations_list']='; '.join(str(d.get('service_combination','')) for d in items)
+    overall['service_governing_combination']=overall.get('service_combination_deflection','')
+    for group in GROUPS[1:]:
+        overall['service_count_'+group]=sum(d.get('service_group')==group for d in items)
+    failing=any(d.get('service_status')=='Não verifica' for d in items)
+    incomplete=missing or any(d.get('service_status')=='Dados insuficientes' for d in items)
+    overall['service_status']='Não verifica' if failing else 'Dados insuficientes' if incomplete else 'OK'
+    overall['service_note']='Verificações por regime: wk/flecha QP; tensões CAR; limite de fluência linear QP; FREQ informativo.'
+    if missing:overall['service_note']+=' Em falta ou inválidas: '+', '.join(sorted(set(missing)))+'.'
+    if overall['service_creep_status']=='Requer fluência não linear':
+        overall['service_note']+=' Tensão QP superior a 0,45 fck: requer fluência não linear.'
     return overall
 
 
@@ -544,19 +574,31 @@ def _sls_params_from_app_advanced(app) -> SLSParametersAdvanced:
     )
 
 
-def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
+def _apply_serviceability_advanced(app, results: pd.DataFrame, progress_callback=None) -> pd.DataFrame:
     if results is None or results.empty:
         app.df_sls_points = pd.DataFrame()
         app.df_sls_parameters = pd.DataFrame()
         app.df_sls_combinations = pd.DataFrame()
         return results
     out = results.copy()
-    target = app.var_service_case.get().strip() if hasattr(app, "var_service_case") else ""
+    target = ""  # Explicit disjoint groups replace the legacy single selector.
     base_params = _sls_params_from_app_advanced(app)
     all_points = []
     all_combos = []
-    for idx, r in out.iterrows():
-        groups, source_note = _service_groups_advanced(app, r, target)
+    service_groups = {}
+    calculations = {}
+    for done, (idx, r) in enumerate(out.iterrows(), 1):
+        if progress_callback:
+            progress_callback(done, len(out))
+        cage_key = (repr(_profile_from_result_serviceability(r)),) + tuple(
+            str(r.get(c, '')) for c in ('member', 'name', 'story', 'material', 'fck_MPa',
+            'fyk_MPa', 'length_m', 'as_prov_bot_mm2', 'as_prov_top_mm2',
+            'd_bot_mm', 'd_top_mm', 'bot_rebar', 'top_rebar',
+            'bot_clear_spacing_mm', 'top_clear_spacing_mm', 'phi_st_mm', 'cover_mm'))
+        group_key = (str(r.get('member', '')), str(r.get('story', '') or ''))
+        if group_key not in service_groups:
+            service_groups[group_key] = _service_groups_advanced(app, r, target)
+        groups, source_note = service_groups[group_key]
         if not groups:
             out.at[idx, "service_status"] = "Dados insuficientes"
             out.at[idx, "service_note"] = "Sem combinação ELS correspondente; resultado de serviço não validado."
@@ -567,14 +609,22 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             continue
         member_items = []
         for case_label, group in groups:
-            params = _params_for_case_advanced(base_params, case_label)
-            sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
-            member_items.append(sls)
-            all_points.extend(points)
-            all_combos.append({
-                "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
-                **sls,
-            })
+            from .combinations import parameters_for_group,apply_check_policy
+            combination_group=str(group['combination_group'].iloc[0])
+            params=parameters_for_group(base_params,combination_group)
+            cache_key = (cage_key, case_label, combination_group)
+            if cache_key not in calculations:
+                sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+                sls = apply_check_policy(sls, combination_group)
+                calculations[cache_key] = sls
+                for point in points:
+                    point['combination_group'] = combination_group
+                all_points.extend(points)
+                all_combos.append({
+                    "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
+                    **sls,
+                })
+            member_items.append(calculations[cache_key])
         governing = _governing_sls_advanced(member_items)
         for k, v in governing.items():
             out.at[idx, k] = v
@@ -588,9 +638,12 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             out.at[idx, "status"] = "Verificar"
     app.df_sls_points = pd.DataFrame(all_points)
     app.df_sls_combinations = pd.DataFrame(all_combos)
-    app.df_sls_parameters = pd.DataFrame([
-        ["Regime base", base_params.regime], ["Regime automático", "Sim" if base_params.auto_regime else "Não"],
-        ["Combinações ELS", target or "todas as reconhecidas"], ["Condição de apoio", base_params.support_condition],
+    from .combinations import GROUPS,classify_combinations,selections_from_app
+    classified=classify_combinations(app.df_clean,selections_from_app(app)) if 'combination_group' not in app.df_clean else app.df_clean
+    group_rows=[["Combinações "+g,'; '.join(classified.loc[classified.combination_group==g,'case'].astype(str).drop_duplicates()) or 'não disponíveis'] for g in GROUPS]
+    app.df_sls_parameters = pd.DataFrame(group_rows+[
+        ["Classificação ELS", "CAR / FREQ / QP; sem regime base implícito"],
+        ["Combinações ELS", "grupos CAR / FREQ / QP selecionados"], ["Condição de apoio", base_params.support_condition],
         ["Histórico de carregamento", base_params.history_mode], ["Fração permanente [%]", base_params.permanent_fraction_pct],
         ["t0,G [dias]", base_params.t0_permanent_days], ["t0,Q [dias]", base_params.t0_variable_days],
         ["RH [%]", base_params.rh_pct], ["t0 efectivo [dias]", base_params.t0_days], ["t [dias]", base_params.t_days],
@@ -609,6 +662,9 @@ def _sls_audit_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         "viga", "member", "name", "story", "case", "service_governing_combination",
         "service_combinations_checked", "service_combination_crack", "service_combination_deflection",
         "service_combination_steel", "service_combination_concrete", "service_regime",
+        "service_group_crack", "service_group_deflection", "service_group_steel", "service_group_concrete",
+        "service_count_ELS_CAR", "service_count_ELS_FREQ", "service_count_ELS_QP",
+        "service_creep_sigma_c_MPa", "service_creep_sigma_c_lim_MPa", "service_creep_status", "service_combination_creep",
         "service_support_condition", "service_history_mode", "service_reinforcement_model",
         "service_points_imported", "service_diagram_quality", "service_phi_creep",
         "service_phi_creep_G", "service_phi_creep_Q", "service_eps_cs_permille", "service_Ec_eff_MPa",
@@ -663,7 +719,19 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
     )
     raw = app.df_clean if getattr(app, "df_clean", None) is not None else pd.DataFrame()
     moment_col = str(app.var_moment_axis.get()).lower() if hasattr(app, "var_moment_axis") else "my"
+    # A common cage is designed per member. Detail it once, retaining every ELU case.
+    from .combinations import classify_combinations, selections_from_app
+    if not raw.empty:
+        if 'combination_group' not in raw:
+            raw = classify_combinations(raw, selections_from_app(app))
+        raw = raw[raw.combination_group == 'ELU']
+    member_data = {str(member): group for member, group in raw.groupby('member', sort=False)} if not raw.empty else {}
+    detailed = set()
     for _, r in results.iterrows():
+        key = (repr(_profile_from_result_serviceability(r)),) + tuple(str(r.get(c, '')) for c in ('member', 'name', 'story', 'bot_rebar', 'top_rebar', 'd_bot_mm', 'd_top_mm', 'd2_top_mm', 'fck_MPa', 'fyd_MPa', 'length_m', 'cot_theta_shear'))
+        if key in detailed:
+            continue
+        detailed.add(key)
         p = _profile_from_result_serviceability(r)
         fck = finite(r.get("fck_MPa"), parse_concrete_strength(r.get("material", DEFAULT_CONCRETE_CLASS)))
         fyd = finite(r.get("fyd_MPa"), finite(app.var_fyk.get(), 500.0) / DEFAULT_GAMMA_S_Reporting)
@@ -689,7 +757,7 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         })
         if raw.empty:
             continue
-        cand = raw[(raw["member"].astype(str) == str(r.get("member", ""))) & (~raw["case"].map(_case_is_els_serviceability))].copy()
+        cand = member_data.get(str(r.get('member', '')), raw.iloc[:0])
         story = str(r.get("story", "") or "")
         if story and "story" in cand.columns:
             same = cand[cand["story"].astype(str) == story]
@@ -701,13 +769,18 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         xgrid = np.linspace(0.0, L, 101)
         pos_env = np.zeros_like(xgrid)
         neg_env = np.zeros_like(xgrid)
+        complete_profiles = True
         for case, grp in cand.groupby("case", dropna=False):
             x, M, _, _ = _moment_diagram_serviceability(grp, L, moment_col)
-            if len(x) < 2:
+            if len(x) < 3:
+                complete_profiles = False
                 continue
             mg = np.interp(xgrid, x, M)
             pos_env = np.maximum(pos_env, np.maximum(mg, 0.0))
             neg_env = np.maximum(neg_env, np.maximum(-mg, 0.0))
+        if not complete_profiles:
+            rows[-1]["detailing_basis"] += "; sem perfil de dispensas: diagrama ELU incompleto"
+            continue
         cp = concrete_props(fck, gamma_c=DEFAULT_GAMMA_C_Reporting)
         bw = p.web_mm
         d_bot = finite(r.get("d_bot_mm"), p.h_mm - 50.0)
@@ -751,44 +824,13 @@ _torsion_requirements_geometry = BeamDesigner.torsion_requirements
 def _torsion_requirements_advanced(self, TEd_kNm, section, fck, fcd, fyd):
     if not isinstance(section, SectionProfileGeometry) or not section.is_i:
         return _torsion_requirements_geometry(self, TEd_kNm, section, fck, fcd, fyd)
-    T = abs(float(TEd_kNm or 0.0))
-    # Preservar o limiar de torção não relevante.
-    proxy_outer = BeamSection(section.outer_width_mm, section.h_mm, 0.0, 0.0)
-    check = _torsion_requirements_geometry(self, T, proxy_outer, fck, fcd, fyd)
-    if str(check.get("torsion_considered", "Não")) != "Sim":
-        check["torsion_geometry_model"] = "secção I subdividida; torção não relevante"
-        return check
-    parts = []
-    if section.top_thickness_mm > 0:
-        parts.append(("banzo superior", section.top_width_mm, section.top_thickness_mm))
-    if section.web_height_mm > 0:
-        parts.append(("alma", section.web_mm, section.web_height_mm))
-    if section.bottom_thickness_mm > 0:
-        parts.append(("banzo inferior", section.bottom_width_mm, section.bottom_thickness_mm))
-    weights = [_rect_torsion_j_advanced(b, h) for _, b, h in parts]
-    sw = sum(weights)
-    if sw <= 0:
-        return _torsion_requirements_geometry(self, T, BeamSection(section.web_mm, section.h_mm, 0.0, 0.0), fck, fcd, fyd)
-    Asw = 0.0
-    Asl = 0.0
-    TRdmax = 0.0
-    details = []
-    for (name, b, h), w in zip(parts, weights):
-        Ti = T * w / sw
-        rr = _torsion_requirements_geometry(self, Ti, BeamSection(b, h, 0.0, 0.0), fck, fcd, fyd)
-        Asw += finite(rr.get("Asw_s_torsion_req_mm2_per_mm"), 0.0)
-        Asl += finite(rr.get("Asl_torsion_req_mm2"), 0.0)
-        TRdmax += finite(rr.get("TRd_max_kNm"), 0.0)
-        details.append(f"{name}:{Ti:.2f} kNm")
-    status = "Requer armadura de torção por subsecções" if T <= TRdmax + 1e-9 else "Não conforme: TEd > soma TRd,max"
-    return {
-        "torsion_considered": "Sim", "torsion_ratio": T / max(TRdmax, 1e-9),
-        "TRd_max_kNm": TRdmax, "Asw_s_torsion_req_mm2_per_mm": Asw,
-        "Asl_torsion_req_mm2": Asl, "torsion_status": status,
-        "tef_mm": None, "Ak_mm2": None, "uk_mm": None,
-        "torsion_geometry_model": "secção I subdividida em banzos e alma; T distribuído por rigidez de Saint-Venant",
-        "torsion_distribution": "; ".join(details),
-    }
+    # Conservative rectangular web model. Summing subsection strengths does
+    # not ensure that the weakest subsection survives the imposed distribution.
+    proxy = BeamSection(section.web_mm, section.h_mm, 0.0, 0.0)
+    result = _torsion_requirements_geometry(self, TEd_kNm, proxy, fck, fcd, fyd)
+    result["torsion_geometry_model"] = "secção I: tubo equivalente limitado à alma; confirmar pormenorização"
+    return result
+
 
 BeamDesigner.torsion_requirements = _torsion_requirements_advanced
 
@@ -829,6 +871,10 @@ def _internal_tests_advanced() -> pd.DataFrame:
 def _ensure_sls_vars_advanced(self):
     _ensure_sls_vars_serviceability(self)
     defaults = {
+        "var_elu_cases": (tk.StringVar, ""),
+        "var_sls_char_cases": (tk.StringVar, ""),
+        "var_sls_freq_cases": (tk.StringVar, ""),
+        "var_sls_qp_cases": (tk.StringVar, ""),
         "var_service_auto_regime": (tk.BooleanVar, True),
         "var_support_condition": (tk.StringVar, "Automática / por tabela"),
         "var_history_mode": (tk.StringVar, "Duas fases G+Q"),
@@ -996,6 +1042,8 @@ BeamsEC2App.validate_inputs = _validate_inputs_advanced
 _run_design_serviceability_base = BeamsEC2App.run_design
 
 def _run_design_advanced(self):
+    if getattr(self,"_calculation_running",False):
+        return
     _ensure_sls_vars_advanced(self)
     self.var_agg.set(f"{DEFAULT_AGGREGATE_MM_Reporting:.0f}")
     self.var_gamma_c.set(f"{DEFAULT_GAMMA_C_Reporting:.2f}")
@@ -1009,11 +1057,23 @@ def _run_design_advanced(self):
         cot_theta=2.0, crack_limit_mm=finite(self.var_crack_limit.get(), 0.30),
         deflection_ld_limit=finite(self.var_ld_limit.get(), 250.0), calc_mode=self.var_calc_mode.get(),
     )
-    elu_env = self.df_env[~self.df_env["case"].map(_case_is_els_serviceability)].copy() if "case" in self.df_env.columns else self.df_env.copy()
+    from .combinations import classify_combinations,selections_from_app
+    try:
+        selection=selections_from_app(self)
+        clean=classify_combinations(self.df_clean,selection)
+        envelopes=classify_combinations(self.df_env,selection)
+    except ValueError as exc:
+        messagebox.showwarning("Combinações",str(exc)); return
+    self.df_clean,self.df_env=clean,envelopes
+    self.show_df(self.tree_env,self.df_env)
+    elu_env=self.df_env[self.df_env['combination_group']=='ELU'].copy()
     if elu_env.empty:
-        messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
+        messagebox.showwarning("Aviso", "Indique as combinações ELU. Os casos não classificados não são assumidos como ELU.")
         return
-    input_df = reduce_to_governing_cases(elu_env) if self.var_reduce_cases.get() else elu_env
+    from .calculation import snapshot_inputs
+    snapshot=snapshot_inputs(self)
+    self._calculation_running=True
+    input_df = elu_env  # Every combination is required for coupled checks.
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
     def progress(done, total):
         pct = 0.0 if total <= 0 else 100.0 * done / total
@@ -1023,13 +1083,18 @@ def _run_design_advanced(self):
         try:
             results = designer.design_dataframe(input_df, progress_callback=progress)
             self.after(0, lambda: self.status_var.set("A calcular envelope ELS..."))
-            results = _apply_serviceability_advanced(self, results)
-            self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(self, results)
+            def sls_progress(done, total):
+                if done == 1 or done == total or done % 25 == 0:
+                    self.after(0, lambda d=done, t=total: self.status_var.set(f"A calcular ELS... {d}/{t} resultados"))
+            results = _apply_serviceability_advanced(snapshot, results, progress_callback=sls_progress)
+            self.after(0, lambda: self.status_var.set("A verificar pormenorização longitudinal..."))
+            self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(snapshot, results)
+            self.after(0, lambda: self.status_var.set("A preparar resultados e validação..."))
             self.df_internal_tests = _internal_tests_advanced()
-            summary = build_summary_by_member(results) if self.var_summary.get() else pd.DataFrame()
+            summary = build_summary_by_member(results) if snapshot.var_summary.get() else pd.DataFrame()
             failures = results[results["status"] == "Falha"].copy() if "status" in results.columns else pd.DataFrame()
             ok = results[results["status"] == "OK"].copy() if "status" in results.columns else pd.DataFrame()
-            validation = build_data_validation(self.df_clean, self.df_env, results)
+            validation = build_data_validation(snapshot.df_clean, snapshot.df_env, results)
             if self.df_internal_tests is not None and not self.df_internal_tests.empty:
                 internal = self.df_internal_tests.copy()
                 internal.insert(0, "Origem", "Teste interno")
@@ -1037,6 +1102,11 @@ def _run_design_advanced(self):
                 internal = internal.rename(columns={"Teste": "Verificação", "Estado": "Resultado"})
                 validation = pd.concat([validation, internal], ignore_index=True, sort=False)
             def finish():
+                self._calculation_running=False
+                self.df_sls_points=snapshot.df_sls_points
+                self.df_sls_combinations=snapshot.df_sls_combinations
+                self.df_sls_parameters=snapshot.df_sls_parameters
+                self._calculation_parameters=BeamsEC2App._parameters_df(snapshot)
                 self.df_results=results; self.df_summary=summary; self.df_failures=failures; self.df_ok=ok
                 self.df_validation=validation; self.df_notes=build_normative_notes(); self.df_filtered=pd.DataFrame()
                 self.show_df(self.tree_results,self.df_results); self.show_df(self.tree_summary,self.df_summary)
@@ -1045,10 +1115,17 @@ def _run_design_advanced(self):
                 self.update_report(); self.progress_var.set(100.0)
                 n_ver=int((results["status"]=="Verificar").sum()) if "status" in results.columns else 0
                 n_tests_fail=int((self.df_internal_tests["Estado"]=="Falha").sum()) if not self.df_internal_tests.empty else 0
-                self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; testes internos com {n_tests_fail} falhas.")
+                ignored=snapshot.df_env.loc[snapshot.df_env['combination_group']=='NAO_CLASSIFICADA','case'].nunique()
+                self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; {ignored} combinações não classificadas excluídas; testes internos com {n_tests_fail} falhas.")
             self.after(0, finish)
         except Exception as exc:
-            msg=str(exc); self.after(0,lambda m=msg:messagebox.showerror("Erro",m)); self.after(0,lambda:self.status_var.set("Falha na análise.")); self.after(0,lambda:self.progress_var.set(0.0))
+            msg=str(exc)
+            def fail(message=msg):
+                self._calculation_running=False
+                self.status_var.set("Falha na análise.")
+                self.progress_var.set(0.0)
+                messagebox.showerror("Erro",message)
+            self.after(0,fail)
     threading.Thread(target=worker,daemon=True).start()
 
 BeamsEC2App.run_design = _run_design_advanced
@@ -1058,11 +1135,17 @@ BeamsEC2App.run_design = _run_design_advanced
 _parameters_df_advanced_base = BeamsEC2App._parameters_df
 
 def _parameters_df_advanced(self):
+    cached=getattr(self,"_calculation_parameters",None)
+    if cached is not None:
+        return cached.copy()
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
-    extra = pd.DataFrame([
-        ["Envelope ELS", "todas as combinações reconhecidas" if not self.var_service_case.get().strip() else self.var_service_case.get().strip()],
-        ["Regime automático", "Sim" if p.auto_regime else "Não"], ["Condição de apoio", p.support_condition],
+    if not base.empty:
+        base=base[~base.iloc[:,0].astype(str).str.contains('Regime ELS|Redução|Combinação ELS|Regime automático',case=False,regex=True)].copy()
+    from .combinations import selections_from_app
+    selection=selections_from_app(self)
+    extra = pd.DataFrame([["Combinações "+group,value or "nome explícito / não selecionada"] for group,value in selection.items()]+[
+        ["Critérios ELS", "wk e flecha final: QP; tensões: CAR; frequente: informativo"], ["Condição de apoio", p.support_condition],
         ["Histórico", p.history_mode], ["Fração permanente [%]", p.permanent_fraction_pct],
         ["t0,G [dias]", p.t0_permanent_days], ["t0,Q [dias]", p.t0_variable_days],
         ["Armadura ELS", "local por Station quando fornecida; caso contrário uniforme"],
@@ -1075,6 +1158,8 @@ BeamsEC2App._parameters_df = _parameters_df_advanced
 _write_excel_advanced_base = BeamsEC2App._write_excel
 
 def _write_excel_advanced(self, path: str):
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de exportar.")
     _write_excel_advanced_base(self, path)
     try:
         from openpyxl import load_workbook
@@ -1082,6 +1167,7 @@ def _write_excel_advanced(self, path: str):
         from openpyxl.utils import get_column_letter
         wb = load_workbook(path)
         datasets = [
+            ("04A_Grupos_Combinacoes", self.df_env[[c for c in ['case','combination_group','limit_state','combination_classification_source'] if c in self.df_env]].drop_duplicates()),
             ("11C_ELS_Combinacoes", getattr(self, "df_sls_combinations", pd.DataFrame())),
             ("12A_Porm_Longitudinal", getattr(self, "df_longitudinal_detailing", pd.DataFrame())),
             ("12B_Perfil_Armadura", getattr(self, "df_longitudinal_profile", pd.DataFrame())),
@@ -1105,8 +1191,8 @@ def _write_excel_advanced(self, path: str):
                 ws.column_dimensions[get_column_letter(j)].width=min(max([len(v) for v in vals]+[10])+2,42)
         wb.properties.title = APP_NAME; wb.properties.creator = ""; wb.properties.lastModifiedBy = ""
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta: folhas adicionais não foram guardadas.") from exc
 
 BeamsEC2App._write_excel = _write_excel_advanced
 
@@ -1121,6 +1207,9 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         for _, r in results.iterrows():
             common = {"Viga": _beam_label_labels(r), "Caso": r.get("case", ""), "Piso": r.get("story", ""), "Secção": r.get("section_geometry_summary", r.get("section_type", ""))}
             rows.extend([
+                {**common, "Etapa": "Armaduras", "Item": "Combinações da armadura comum", "Valor": r.get('adopted_for_cases',''), "Unidade": "-", "Critério/Referência": "Todas as combinações do membro", "Estado/Nota": r.get('shared_cage_converged','')},
+                {**common, "Etapa": "Torção", "Item": "As reservada inferior / superior", "Valor": f"{r.get('torsion_reserved_bot_mm2',0):.2f} / {r.get('torsion_reserved_top_mm2',0):.2f}", "Unidade": "mm²", "Critério/Referência": "EC2 6.3.2; não reutilizada em flexão", "Estado/Nota": f"Passo dos varões laterais: {r.get('torsion_side_pitch_mm','-')} mm"},
+                {**common, "Etapa": "Armaduras", "Item": "Convergência / iterações", "Valor": f"{r.get('reinforcement_converged','')} / {r.get('reinforcement_iterations','')}", "Unidade": "-", "Critério/Referência": "Resistência com posições reais", "Estado/Nota": f"Estribo {r.get('phi_st_mm','')} mm; d inferior {r.get('d_bot_mm','')} mm; d superior {r.get('d_top_mm','')} mm"},
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},
                 {**common, "Etapa": "Pormenorização", "Item": "Armadura ELS ao longo do vão", "Valor": r.get("service_reinforcement_model", ""), "Unidade": "-", "Critério/Referência": "Modelo de rigidez", "Estado/Nota": ""},
@@ -1144,7 +1233,7 @@ def build_normative_notes_advanced() -> pd.DataFrame:
         ("Condições de apoio", "Compatibilidade cinemática", "A integração da curvatura considera vão entre apoios, consola esquerda/direita ou encastre-encastre; a condição pode ser definida por viga."),
         ("Histórico de carregamento", "NP EN 1992-1-1, Anexo B", "O modo G+Q usa coeficientes de fluência distintos por idade de aplicação e um coeficiente efectivo ponderado pela fracção permanente."),
         ("Pormenorização longitudinal", "NP EN 1992-1-1, 8.4 e 9.2.1.3", "São reportados comprimentos de amarração, decalagem al e perfil de armadura necessária; confirmar nós, emendas e disponibilidade geométrica."),
-        ("Torção em I", "NP EN 1992-1-1, 6.3", "A secção I é subdividida em banzos e alma, distribuindo T pela rigidez de Saint-Venant; rever a pormenorização específica quando a torção for relevante."),
+        ("Torção em I", "NP EN 1992-1-1, 6.3", "Modelo tubular limitado à alma; confirmar a pormenorização. Não se somam resistências de subsecções."),
         ("Validação automática", "Controlo interno", "O workbook inclui testes de integração, propriedades geométricas e sanidade dos modelos de fluência/retracção."),
     ], columns=["Tema", "Referência", "Nota"])
     return pd.concat([notes, extra], ignore_index=True)
@@ -1160,8 +1249,8 @@ def _design_one_advanced(self, row: pd.Series) -> Dict:
     out = _design_one_advanced_base(self, row)
     if str(out.get("section_type", "")).startswith("I"):
         out["torsion_method"] = (
-            "NP EN 1992-1-1:2010, 6.3; secção subdividida em banzos e alma, "
-            "com distribuição de T pela rigidez de Saint-Venant"
+            "NP EN 1992-1-1:2010, 6.3; modelo conservador limitado à alma, "
+            "com confirmação da pormenorização"
         )
         if str(out.get("torsion_considered", "Não")) == "Sim" and out.get("status") == "OK":
             out["status"] = "Verificar"
@@ -1188,7 +1277,7 @@ def _update_report_advanced(self):
         "Relatório resumido de dimensionamento de vigas\n\n",
         f"Envelopes analisados: {n_total} | OK: {n_ok} | Falhas: {n_fail}\n",
         f"Suporte normativo: {NORMATIVE_SUPPORT_EXTENDED}\n",
-        f"ELS: {self.var_service_case.get().strip() if hasattr(self,'var_service_case') and self.var_service_case.get().strip() else 'todas as combinações reconhecidas'}\n\n",
+        "ELS por regime: QP para wk/flecha; CAR para tensões; FREQ informativo.\n\n",
     ]
     for _, r in src.head(120).iterrows():
         lines.append(f"Viga {_beam_label_labels(r)} | Caso ELU {r.get('case','')} | Piso {r.get('story','')}\n")
@@ -1216,6 +1305,8 @@ BeamsEC2App.update_report = _update_report_advanced
 _write_pdf_advanced_base = BeamsEC2App._write_pdf
 
 def _write_pdf_advanced(self, path: str):
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de exportar.")
     if not hasattr(self, "var_pdf_scope") or self.var_pdf_scope.get() != "Relatório técnico":
         return _write_pdf_advanced_base(self, path)
     from reportlab.lib import colors
@@ -1230,7 +1321,7 @@ def _write_pdf_advanced(self, path: str):
     doc.title = APP_NAME; doc.author = ""; doc.subject = APP_SUBJECT
     story = [_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False))
     story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom
@@ -1241,11 +1332,11 @@ def _write_pdf_advanced(self, path: str):
     story += [
         Paragraph("Geometria identificada",styles["BodyCourier"]),self._pdf_df_table(geom,["viga","story","section_type","section_geometry_summary","section_geometry_source","section_geometry_confidence","section_fit_error_pct"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Critérios de cálculo",styles["BodyCourier"]),self._pdf_df_table(self._parameters_df(),["Parâmetro","Valor"],max_rows=None,widths=[90,180]),Spacer(1,5*mm),
-        Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(summary),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(summary),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_status"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","combination_group","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(results),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(results),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","eta_vt","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_count_ELS_CAR","service_count_ELS_FREQ","service_count_ELS_QP","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_creep_status","service_status"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","case","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Testes internos",styles["BodyCourier"]),self._pdf_df_table(tests,["Teste","Calculado","Referência","Erro relativo","Tolerância","Estado"],max_rows=None),
     ]
     if failures is not None and not failures.empty:
@@ -1254,6 +1345,8 @@ def _write_pdf_advanced(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_advanced

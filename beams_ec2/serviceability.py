@@ -53,7 +53,9 @@ def _ec2_creep_coefficient_serviceability(fcm: float, rh_pct: float, h0_mm: floa
     rh = min(max(float(rh_pct), 40.0), 100.0)
     h0 = max(float(h0_mm), 20.0)
     t0 = max(float(t0_days), 0.5)
-    t = max(float(t_days), t0 + 1e-6)
+    t = max(float(t_days), 0.0)
+    if t <= float(t0_days):
+        return 0.0
     cement = _cement_class_serviceability(cement_class)
     alpha_cement = {"S": -1.0, "N": 0.0, "R": 1.0}[cement]
     t0_adj = t0 * (9.0 / (2.0 + t0 ** 1.2) + 1.0) ** alpha_cement
@@ -175,10 +177,14 @@ def _uncracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t:
 
 
 def _cracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t: float, As_c: float, d_c: float, alpha_e: float) -> Dict[str, float]:
+    def steel_coefficients(x):
+        # Replace concrete displaced by steel in the compression zone.
+        return alpha_e-(1.0 if d_t<x else 0.0), alpha_e-(1.0 if d_c<x else 0.0)
     def f(x: float) -> float:
         Ac, Qc, _ = _profile_interval_props_serviceability(p, 0.0, x)
-        At = Ac + alpha_e * (As_t + As_c)
-        Qt = Qc + alpha_e * (As_t * d_t + As_c * d_c)
+        nt,nc=steel_coefficients(x)
+        At = Ac + nt*As_t + nc*As_c
+        Qt = Qc + nt*As_t*d_t + nc*As_c*d_c
         return Qt / max(At, 1e-9) - x
     lo = 0.1
     hi = min(max(d_t - 0.1, 0.2), p.h_mm - 0.1)
@@ -198,8 +204,9 @@ def _cracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t: f
                 flo = fm
         x = 0.5 * (lo + hi)
     Ac, Qc, I0c = _profile_interval_props_serviceability(p, 0.0, x)
-    I0 = I0c + alpha_e * (As_t * d_t ** 2 + As_c * d_c ** 2)
-    At = Ac + alpha_e * (As_t + As_c)
+    nt,nc=steel_coefficients(x)
+    I0 = I0c + nt*As_t*d_t**2 + nc*As_c*d_c**2
+    At = Ac + nt*As_t + nc*As_c
     I = max(I0 - At * x ** 2, 1.0)
     S = As_t * (d_t - x) + As_c * (d_c - x)
     return {"x_mm": x, "I_mm4": I, "S_mm3": S, "A_mm2": At}
@@ -255,7 +262,9 @@ def _local_sls_response_serviceability(M_kNm: float, states: Dict, time_name: st
     k_cr = M_nmm / max(Ec * st["I_cr_mm4"], 1e-9)
     k_load = sign * (zeta * k_cr + (1.0 - zeta) * k_un)
     k_sh = st["orientation"] * (zeta * st["kcs_cr"] + (1.0 - zeta) * st["kcs_un"])
-    sigma_s = st["alpha_e"] * M_nmm * max(st["d_t"] - st["x_cr_mm"], 0.0) / max(st["I_cr_mm4"], 1e-9)
+    xs = st["x_cr_mm"] if zeta > 0 else st["x_un_mm"]
+    Is = st["I_cr_mm4"] if zeta > 0 else st["I_un_mm4"]
+    sigma_s = st["alpha_e"] * M_nmm * max(st["d_t"] - xs, 0.0) / max(Is, 1e-9)
     sigma_c = M_nmm * st["x_cr_mm"] / max(st["I_cr_mm4"], 1e-9) if zeta > 0 else M_nmm * st["x_un_mm"] / max(st["I_un_mm4"], 1e-9)
     wk = 0.0
     srmax = 0.0
@@ -340,46 +349,24 @@ def _service_group_serviceability(app, r: pd.Series, target: str):
 
 
 def _moment_diagram_serviceability(group: pd.DataFrame, length_m: float, moment_col: str):
+    """Station (m) is dimensional. Never stretch partial diagrams to a full span."""
     import numpy as np
-    if group is None or group.empty:
-        return np.array([]), np.array([]), "Insuficiente", ""
-    g = group.sort_values("__row_order").copy()
-    L = max(float(length_m), 1e-6)
-    m = np.array([finite(v, 0.0) for v in g.get(moment_col, pd.Series([0.0] * len(g)))], dtype=float)
-    st = np.array([safe_float(v, float("nan")) for v in g.get("station", pd.Series([float("nan")] * len(g)))], dtype=float)
-    source = "estações importadas"
-    finite_mask = np.isfinite(st)
-    if finite_mask.sum() >= 2:
-        stf = st[finite_mask]
-        mf = m[finite_mask]
-        order = np.argsort(stf)
-        stf, mf = stf[order], mf[order]
-        if stf.max() <= 1.001 and L > 1.5:
-            stf = stf * L
-            source = "estações normalizadas 0-1"
-        else:
-            stf = stf - stf.min()
-        if stf.max() > L * 1.10 or stf.max() <= 1e-9:
-            stf = np.linspace(0.0, L, len(mf))
-            source = "ordem das linhas distribuída no vão"
-        else:
-            if stf.max() < L * 0.95:
-                stf = stf * (L / max(stf.max(), 1e-9))
-                source += "; ajustadas ao comprimento"
-        x, M = stf, mf
-    else:
-        x = np.linspace(0.0, L, len(m))
-        M = m
-        source = "ordem das linhas distribuída no vão"
-    if len(x) == 0:
-        return x, M, "Insuficiente", source
-    unique = {}
-    for xx, mm in zip(x, M):
-        unique.setdefault(round(float(xx), 9), []).append(float(mm))
-    x = np.array(sorted(unique.keys()), dtype=float)
-    M = np.array([sum(unique[xx]) / len(unique[xx]) for xx in x], dtype=float)
-    quality = "Adequado" if len(x) >= 5 else ("Aceitável" if len(x) >= 3 else "Insuficiente")
-    return x, M, quality, source
+    empty = np.array([])
+    if group is None or group.empty or moment_col not in group or "station" not in group:
+        return empty, empty, "Insuficiente", "estações ou momentos em falta"
+    g = group[["station", moment_col]].copy()
+    if not np.isfinite(g.to_numpy(dtype=float)).all():
+        return empty, empty, "Insuficiente", "valores não finitos"
+    for _, part in g.groupby("station"):
+        if part[moment_col].max() - part[moment_col].min() > 1e-8:
+            return empty, empty, "Insuficiente", "momentos diferentes na mesma estação"
+    g = g.drop_duplicates("station").sort_values("station")
+    x, M = g.station.to_numpy(dtype=float), g[moment_col].to_numpy(dtype=float)
+    L = float(length_m)
+    if len(x) < 2 or abs(x[0]) > 1e-8 or abs(x[-1] - L) > 1e-8:
+        return empty, empty, "Insuficiente", "diagrama não cobre 0 a L; estações em metros"
+    quality = "Adequado" if len(x) >= 5 else "Aceitável" if len(x) >= 3 else "Insuficiente"
+    return x, M, quality, "estações importadas em metros; sem reescala"
 
 
 def _calculate_member_sls_serviceability(app, r: pd.Series, group: pd.DataFrame, case_label: str, source_note: str, params: SLSParametersServiceability):
@@ -897,8 +884,8 @@ def _write_excel_serviceability(self, path: str):
         wb.properties.creator = ""
         wb.properties.lastModifiedBy = ""
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 BeamsEC2App._write_excel = _write_excel_serviceability
 
@@ -919,7 +906,7 @@ def _write_pdf_serviceability(self, path: str):
     doc.title=APP_NAME; doc.author=""; doc.subject=APP_SUBJECT
     story=[_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom
     env=self.df_env.copy() if self.df_env is not None else pd.DataFrame(); env=env.assign(viga=env.apply(_beam_label_labels,axis=1)) if not env.empty else env
@@ -936,6 +923,8 @@ def _write_pdf_serviceability(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_serviceability

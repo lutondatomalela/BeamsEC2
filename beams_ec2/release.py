@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.1"
+APP_VERSION = "v0.2.0-rc7"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -31,11 +31,12 @@ for _module in (_base, _design, _reporting, _geometry, _serviceability, _impleme
     _module.APP_TABLE_DESCRIPTION = APP_TABLE_DESCRIPTION
 
 TABLE_COLUMNS_REQUIRED = [
-    "Member/Node/Case", "Station (m)", "FZ (kN)", "MX (kNm)", "MY (kNm)",
+    "Member/Node/Case", "FZ (kN)", "MX (kNm)", "MY (kNm)",
     "Length (m)", "Material", "HY (cm)", "HZ (cm)",
 ]
 TABLE_COLUMNS_RECOMMENDED = ["Name", "Story"]
 TABLE_COLUMNS_ELS = [
+    "Station (m)",
     "Support Condition", "As Bot Local (mm2)", "As Top Local (mm2)",
     "Bot Rebar Local", "Top Rebar Local",
 ]
@@ -88,21 +89,21 @@ def _build_sidebar_clean(self, parent):
     ttk.Combobox(params, textvariable=self.var_shear_axis, values=["FZ", "FY"], state="readonly").grid(row=5, column=1, sticky="ew", padx=6, pady=4)
     ttk.Label(params, text="Torção").grid(row=6, column=0, sticky="w", padx=6, pady=4)
     ttk.Combobox(params, textvariable=self.var_torsion_axis, values=["MX", "MY", "MZ", "Nenhuma"], state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Checkbutton(params, text="Reduzir para casos governantes", variable=self.var_reduce_cases).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    ttk.Label(params, text="Todas as combinações ELU selecionadas serão verificadas.", wraplength=310).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=3)
     ttk.Checkbutton(params, text="Gerar resumo por viga", variable=self.var_summary).grid(row=8, column=0, columnspan=2, sticky="w", padx=6, pady=3)
     params.columnconfigure(1, weight=1)
 
-    sls = ttk.LabelFrame(parent, text="3. Estados-limite de serviço")
+    sls = ttk.LabelFrame(parent, text="3. Combinações e parâmetros ELS")
     sls.pack(fill="x", pady=(0, 8))
-    ttk.Label(sls, text="Combinações ELS").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-    ttk.Entry(sls, textvariable=self.var_service_case).grid(row=0, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Checkbutton(sls, text="Reconhecer automaticamente o regime", variable=self.var_service_auto_regime).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Regime base").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_service_regime, values=["Quase-permanente / longo prazo", "Frequente / repetida", "Característica / curta duração"], state="readonly").grid(row=2, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Label(sls, text="Condição de apoio").grid(row=3, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_support_condition, values=["Automática / por tabela", "Entre apoios (y0=yL=0)", "Consola - encastrada à esquerda", "Consola - encastrada à direita", "Encastre-encastre"], state="readonly").grid(row=3, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Label(sls, text="Histórico").grid(row=4, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_history_mode, values=["Duas fases G+Q", "Uma idade efectiva"], state="readonly").grid(row=4, column=1, sticky="ew", padx=6, pady=4)
+    for line,(label,variable) in enumerate([
+        ('ELU',self.var_elu_cases),('ELS característica',self.var_sls_char_cases),
+        ('ELS frequente',self.var_sls_freq_cases),('ELS quase-permanente',self.var_sls_qp_cases)]):
+        ttk.Label(sls,text=label).grid(row=line,column=0,sticky='w',padx=6,pady=4)
+        ttk.Entry(sls,textvariable=variable,width=18).grid(row=line,column=1,sticky='ew',padx=6,pady=4)
+    ttk.Label(sls, text="Condição de apoio").grid(row=4, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_support_condition, values=["Automática / por tabela", "Entre apoios (y0=yL=0)", "Consola - encastrada à esquerda", "Consola - encastrada à direita", "Encastre-encastre"], state="readonly").grid(row=4, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="Histórico").grid(row=5, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_history_mode, values=["Duas fases G+Q", "Uma idade efectiva"], state="readonly").grid(row=5, column=1, sticky="ew", padx=6, pady=4)
     self._add_label_entry(sls, "Fração permanente [%]", self.var_permanent_fraction, 5)
     self._add_label_entry(sls, "t0,G [d]", self.var_t0_permanent, 6)
     self._add_label_entry(sls, "t0,Q [d]", self.var_t0_variable, 7)
@@ -110,11 +111,11 @@ def _build_sidebar_clean(self, parent):
     self._add_label_entry(sls, "t0 efectivo [d]", self.var_service_t0, 9)
     self._add_label_entry(sls, "Idade final t [d]", self.var_service_t, 10)
     self._add_label_entry(sls, "Início da secagem ts [d]", self.var_service_ts, 11)
-    ttk.Label(sls, text="Classe de cimento").grid(row=12, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_service_cement, values=["S", "N", "R"], state="readonly", width=8).grid(row=12, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="Classe de cimento").grid(row=13, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_service_cement, values=["S", "N", "R"], state="readonly", width=8).grid(row=13, column=1, sticky="ew", padx=6, pady=4)
     self._add_label_entry(sls, "h0 [mm] (0=automático)", self.var_service_h0, 13)
-    ttk.Checkbutton(sls, text="Considerar retracção", variable=self.var_service_shrinkage).grid(row=14, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Campo vazio: verifica todas as combinações ELS reconhecidas. Várias combinações podem ser separadas por ponto e vírgula.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=15, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+    ttk.Checkbutton(sls, text="Considerar retracção", variable=self.var_service_shrinkage).grid(row=15, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    ttk.Label(sls, text="Use listas ou intervalos: 101-133 140; 205-220. Sem seleção, só nomes explícitos são reconhecidos. Casos não classificados ficam excluídos.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=16, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
     sls.columnconfigure(1, weight=1)
 
     filters = ttk.LabelFrame(parent, text="4. Filtros")
@@ -185,7 +186,7 @@ def _build_instructions_clean(self, parent):
         "4. GEOMETRIA\n"
         "Secções rectangulares utilizam HY e HZ. Secções T podem ser definidas por BF e HF. Secções I podem ser introduzidas pelas dimensões dos banzos e da alma ou identificadas através das propriedades geométricas. Confirme sempre a geometria indicada no separador de envelopes antes de aceitar o cálculo.\n\n"
         "5. Estados Limites de Serviço - ELS\n"
-        "Deixe ‘Combinações ELS’ em branco para verificar todas as combinações reconhecidas. O programa determina governantes separados para fendilhação, flecha, tensão no aço e tensão no betão. A condição de apoio pode ser global ou definida na própria tabela.\n\n"
+        "Indique grupos separados: ELU, ELS característica, frequente e quase-permanente. Aceita listas e intervalos, por exemplo 101-133 140. Uma combinação não pode pertencer a dois grupos. Só ELU é dimensionada; wk e flecha final usam QP, tensões usam característica e FREQ é informativo. Casos não classificados ficam excluídos. Sem seleções, apenas nomes explícitos são reconhecidos; (C) não define ELU. A ausência de QP ou característica impede um estado ELS global OK.\n\n"
         "6. RESULTADOS\n"
         "‘OK’ indica cumprimento dos critérios implementados. ‘Falha’ identifica incumprimento. ‘Verificar’ assinala dados insuficientes, hipóteses que exigem confirmação ou situações fora do âmbito automático. A memória de cálculo contém os dados e resultados de auditoria; os relatórios em PDF destinam-se à apresentação.\n\n"
         "7. CONTROLO DE QUALIDADE\n"
@@ -201,6 +202,8 @@ BeamsEC2App._build_instructions_tab = _build_instructions_clean
 def _prepare_input_frames(df: pd.DataFrame, moment_axis="my", shear_axis="fz", torsion_axis="mx"):
     """Executa a cadeia pública completa de limpeza e identificação geométrica."""
     clean = _implementation.clean_dataframe(df)
+    from .validation import validate_table
+    validate_table(clean, moment_axis, shear_axis, torsion_axis)
     envelopes = _implementation.build_beam_envelopes(
         clean,
         moment_axis=moment_axis,
@@ -212,13 +215,21 @@ def _prepare_input_frames(df: pd.DataFrame, moment_axis="my", shear_axis="fz", t
 
 def _load_df_clean(self, df: pd.DataFrame, source: str = ""):
     """Carrega a tabela usando os módulos finais, sem regressar às rotinas base."""
-    self.df_raw = df.copy()
-    self.df_clean, self.df_env = _prepare_input_frames(
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de substituir a tabela.")
+    clean, envelopes = _prepare_input_frames(
         df,
         moment_axis=self.var_moment_axis.get().lower(),
         shear_axis=self.var_shear_axis.get().lower(),
         torsion_axis=self.var_torsion_axis.get().lower(),
     )
+    from .combinations import classify_combinations,selections_from_app
+    selection=selections_from_app(self)
+    clean=classify_combinations(clean,selection,validate_missing=False)
+    envelopes=classify_combinations(envelopes,selection,validate_missing=False)
+    self._calculation_parameters=None
+    self.df_raw = df.copy()
+    self.df_clean, self.df_env = clean, envelopes
     self.df_calc_input = pd.DataFrame()
     self.df_results = pd.DataFrame()
     self.df_summary = pd.DataFrame()

@@ -1,0 +1,80 @@
+name: Validation
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements-test.txt
+      - run: python selftest.py
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q beams_ec2 tests
+      - name: Windows Tk calculation and exports
+        if: runner.os == 'Windows'
+        env:
+          BEAMSEC2_GUI_TESTS: '1'
+        run: python -m unittest discover -s tests -p test_windows_gui.py -v
+  build-windows:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements-build.txt
+      - name: Build portable application
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name BeamsEC2 --hidden-import xlrd BeamsEC2.py
+      - name: Check frozen application
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "$pwd/dist/BeamsEC2.exe" -ArgumentList "--smoke-test", "`"$pwd/out/frozen check`"" -PassThru
+          if (-not $process.WaitForExit(120000)) {
+            $process.Kill()
+            throw "Frozen application timed out"
+          }
+          if (Test-Path "out/frozen check/smoke-test.json") {
+            Get-Content "out/frozen check/smoke-test.json"
+          } else {
+            throw "Frozen application did not write its check result"
+          }
+          $result = Get-Content "out/frozen check/smoke-test.json" -Raw | ConvertFrom-Json
+          if ($process.ExitCode -ne 0 -or -not $result.ok) {
+            throw "Frozen application check failed"
+          }
+      - name: Package candidate with provenance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path out/Windows-x64
+          Copy-Item dist/BeamsEC2.exe, table_template.xlsx, README.md, CHANGELOG.md -Destination out/Windows-x64
+          Copy-Item docs -Destination out/Windows-x64 -Recurse
+          "Source commit: $env:GITHUB_SHA" | Set-Content out/Windows-x64/BUILD.txt
+          python --version | Add-Content out/Windows-x64/BUILD.txt
+          python -m pip freeze | Add-Content out/Windows-x64/BUILD.txt
+          Get-FileHash out/Windows-x64/BeamsEC2.exe -Algorithm SHA256 | Format-List | Out-String | Add-Content out/Windows-x64/BUILD.txt
+      - name: Upload checked Windows candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: BeamsEC2-rc7-Windows-x64
+          path: out/Windows-x64/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload executable check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-executable-check
+          path: out/frozen check/
+          retention-days: 14
+          if-no-files-found: ignore

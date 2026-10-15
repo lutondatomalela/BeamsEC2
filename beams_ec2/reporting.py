@@ -149,7 +149,7 @@ def _metadata_df_reporting(self) -> pd.DataFrame:
         ["Ficheiro de origem", self.input_file_path or "-"],
         ["Suporte normativo", NORMATIVE_SUPPORT_EXTENDED],
         ["Âmbito", "Dimensionamento/verificação ELU e ELS expedito de vigas de betão armado"],
-        ["Critério de torção", f"Armadura específica apenas se TEd/TRd,max >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
+        ["Critério de torção", f"Torção de equilíbrio: armadura para TEd > 0; limiar = {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25"],
         ["Diâmetros de estribos", "Ø6, Ø8, Ø10; mínimo 2 ramos"],
         ["Descrição", APP_TABLE_DESCRIPTION],
@@ -423,7 +423,7 @@ def _write_pdf_reporting(self, path: str):
     meta = [
         ["Programa", APP_NAME, "Tipo de relatório", scope],
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25", "Torção", f"ηT >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t, Spacer(1, 5*mm)]
@@ -477,6 +477,8 @@ def _write_pdf_reporting(self, path: str):
         canvas.drawString(12*mm, 7*mm, f"{APP_NAME} | {footer_date}")
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_reporting
@@ -613,7 +615,8 @@ def _shear_requirements_calculation(self, VEd_kN: float, bw: float, d: float, As
     V = abs(float(VEd_kN or 0.0)) * 1000.0
     z = 0.9 * d
     nu1 = 0.6 * (1.0 - fck / 250.0)
-    cot, VRdmax = _auto_cot_for_shear_calculation(V, bw, z, nu1, fcd)
+    cot = self.cot_theta
+    VRdmax = bw * z * nu1 * fcd / (cot + 1.0 / cot)
     vrdc = self.vrd_c(VEd_kN, bw, d, Asl, fck, fcd)
     VRdc_N = vrdc["VRd_c_kN"] * 1000.0
     if V <= VRdc_N + 1e-9:
@@ -635,72 +638,15 @@ def _shear_requirements_calculation(self, VEd_kN: float, bw: float, d: float, As
         "shear_status": status,
         "cot_theta": cot,
         "cot_theta_shear": cot,
-        "cot_theta_source": "calculado automaticamente no intervalo 1.0 <= cotθ <= 2.5",
+        "cot_theta_source": "inclinação comum a corte e torção",
     }
 
 
 BeamDesigner.shear_requirements = _shear_requirements_calculation
 
 
-def _torsion_requirements_calculation(self, TEd_kNm: float, section: BeamSection, fck: float, fcd: float, fyd: float) -> Dict[str, float | str]:
-    T = abs(float(TEd_kNm or 0.0)) * 1e6
-    b = section.bw_mm
-    h = section.h_mm
-    if b <= 0 or h <= 0:
-        return {
-            "TRd_max_kNm": None,
-            "Asw_s_torsion_req_mm2_per_mm": 0.0,
-            "Asl_torsion_req_mm2": 0.0,
-            "torsion_status": "Dados insuficientes",
-            "torsion_considered": "Não",
-            "eta_torsion_design": 0.0,
-            "cot_theta_torsion": None,
-            "tef_mm": None,
-            "Ak_mm2": None,
-            "uk_mm": None,
-        }
-    A = b * h
-    u = 2.0 * (b + h)
-    tef = max(A / max(u, 1e-9), 2.0 * self.cover_mm, 50.0)
-    tef = min(tef, min(b, h) / 2.0 - 1.0)
-    Ak = max((b - tef) * (h - tef), 1.0)
-    uk = 2.0 * max(b + h - 2.0 * tef, 1.0)
-    nu1 = 0.6 * (1.0 - fck / 250.0)
-    cot, TRdmax, Asw_s_auto, Asl_auto = _auto_cot_for_torsion_calculation(T, Ak, tef, uk, nu1, fcd, fyd)
-    TRdmax_kNm = TRdmax / 1e6
-    eta = (T / max(TRdmax, 1e-9)) if T > 0 else 0.0
-    if T <= 1e-9:
-        status = "Sem torção relevante"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif eta < TORSION_RELEVANCE_ETA_Detailing:
-        status = f"Sem torção relevante (ηT={eta:.3f} < {TORSION_RELEVANCE_ETA_Detailing:.2f})"
-        considered = "Não"
-        Asw_s = 0.0
-        Asl = 0.0
-    elif T <= TRdmax + 1e-9:
-        status = "Requer verificação/armadura de torção"
-        considered = "Sim"
-        Asw_s = Asw_s_auto
-        Asl = Asl_auto
-    else:
-        status = "Não conforme: TEd > TRd,max"
-        considered = "Sim"
-        Asw_s = Asw_s_auto
-        Asl = Asl_auto
-    return {
-        "TRd_max_kNm": TRdmax_kNm,
-        "Asw_s_torsion_req_mm2_per_mm": Asw_s,
-        "Asl_torsion_req_mm2": Asl,
-        "torsion_status": status,
-        "torsion_considered": considered,
-        "eta_torsion_design": eta,
-        "cot_theta_torsion": cot,
-        "tef_mm": tef,
-        "Ak_mm2": Ak,
-        "uk_mm": uk,
-    }
+def _torsion_requirements_calculation(self, TEd_kNm, section, fck, fcd, fyd):
+    return _torsion_requirements_detailing(self, TEd_kNm, section, fck, fcd, fyd)
 
 
 BeamDesigner.torsion_requirements = _torsion_requirements_calculation
@@ -875,7 +821,7 @@ def _vt_audit_df_calculation(results: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     df = results.copy()
     df["viga"] = df.apply(_beam_label_calculation, axis=1)
-    cols = ["viga","case","story","v_ed_kN","v_at","VRd_c_kN","VRd_max_kN","cot_theta_shear","eta_shear_max","Asw_s_shear_req_mm2_per_m","Asw_s_min_mm2_per_m","t_ed_kNm","t_at","TRd_max_kNm","cot_theta_torsion","eta_torsion_max","eta_torsion_design","torsion_considered","Asw_s_torsion_req_mm2_per_m","Asl_torsion_req_mm2","Asw_s_total_req_mm2_per_m","phi_st_mm","stirrup_legs","s_st_mm","Asw_s_prov_mm2_per_m","shear_status","torsion_status","stirrup_status"]
+    cols = ["viga","case","story","v_ed_kN","v_at","VRd_c_kN","VRd_max_kN","cot_theta_shear","eta_shear_max","Asw_s_shear_req_mm2_per_m","Asw_s_min_mm2_per_m","t_ed_kNm","t_at","TRd_max_kNm","cot_theta_torsion","eta_torsion_max","eta_vt","eta_torsion_design","torsion_considered","Asw_s_torsion_req_mm2_per_m","Asl_torsion_req_mm2","Asw_s_total_req_mm2_per_m","phi_st_mm","stirrup_legs","s_st_mm","Asw_s_prov_mm2_per_m","shear_status","torsion_status","stirrup_status"]
     return df[[c for c in cols if c in df.columns]].copy()
 
 
@@ -1202,7 +1148,7 @@ def _write_pdf_calculation(self, path: str):
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1259,6 +1205,8 @@ def _write_pdf_calculation(self, path: str):
         canvas.drawString(12*mm, 7*mm, f"{APP_NAME} | {footer_date}")
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 
@@ -1294,8 +1242,8 @@ def _write_excel_calculation(self, path: str):
                         ws.delete_rows(row, 1)
                         break
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 
 BeamsEC2App._write_excel = _write_excel_calculation
@@ -1334,7 +1282,7 @@ def _beamdesigner_init_stirrups(self, *args, **kwargs):
 BeamDesigner.__init__ = _beamdesigner_init_stirrups
 
 
-def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool) -> Dict[str, float | str]:
+def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool, phi_st_mm=None, torsion_asw_s=None) -> Dict[str, float | str]:
     """Escolha construtiva dos estribos.
 
     Regras adoptadas:
@@ -1354,12 +1302,24 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
 
     candidates = []
     for legs in STIRRUP_LEGS_Detailing:
-        if legs < 2:
+        if legs < 2 or (torsion and torsion_asw_s is None and legs != 2):
             continue
         for phi in STIRRUP_DIAMS_Detailing:
+            if phi_st_mm is not None and phi != phi_st_mm:
+                continue
+            transverse_spacing=(b-2*self.cover_mm-phi)/(legs-1)
+            if transverse_spacing > min(0.75*d,600.0)+1e-9:
+                continue
+            if transverse_spacing-phi < self.min_clear_spacing(phi)-1e-9:
+                continue
             area = legs * bar_area_mm2(phi)
             for s in sorted(allowed_s, reverse=True):
                 provided = area / s
+                if s > s_lim + 1e-9:
+                    continue
+                # Extra shear legs do not increase the outer closed loop's torsion resistance.
+                if torsion and torsion_asw_s is not None and 2 * bar_area_mm2(phi) / s + 1e-12 < torsion_asw_s:
+                    continue
                 if provided + 1e-12 < Asw_s_total:
                     continue
                 # Score construtivo:
@@ -1384,8 +1344,8 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
         return candidates[0][1]
 
     # Se não couber com a lista normalizada, adoptar a solução máxima no menor espaçamento da lista e assinalar.
-    phi = STIRRUP_DIAMS_Detailing[-1]
-    legs = STIRRUP_LEGS_Detailing[-1]
+    phi = phi_st_mm if phi_st_mm is not None else STIRRUP_DIAMS_Detailing[-1]
+    legs = 2 if torsion else STIRRUP_LEGS_Detailing[-1]
     s = min(allowed_s)
     area = legs * bar_area_mm2(phi)
     return {
@@ -1578,10 +1538,8 @@ def _pdf_df_table_full_reports(self, df: pd.DataFrame, cols: List[str], max_rows
     resumo, por exemplo V4, podiam não aparecer nos PDFs, apesar de existirem
     no memória de cálculo. Esta versão permite max_rows=None para incluir todas as linhas.
     """
-    memory_cols = ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"]
-    if widths is None and list(cols) == memory_cols:
-        widths = [30, 20, 18, 28, 26, 32, 42, 16, 38, 20]
-    return _old_pdf_df_table_full_reports_base(self, df, cols, max_rows=_all_rows_pdf_limit_full_reports(max_rows), widths=widths)
+    from .pdf_layout import engineering_table
+    return engineering_table(self,df,cols,_all_rows_pdf_limit_full_reports(max_rows),widths,_pdf_styles_report_base())
 
 BeamsEC2App._pdf_df_table = _pdf_df_table_full_reports
 
@@ -1613,7 +1571,7 @@ def _write_pdf_full_reports(self, path: str):
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1626,7 +1584,7 @@ def _write_pdf_full_reports(self, path: str):
             Paragraph("Resumo executivo", styles["Section"]),
             self._pdf_df_table(exec_df, ["Indicador", "Valor"], max_rows=None, widths=[90, 180]),
             Spacer(1, 5*mm),
-            Paragraph("Resumo por viga", styles["BodyCourier"]),
+            Paragraph("Solução comum por viga - caso representativo", styles["BodyCourier"]),
             self._pdf_df_table(summary_pdf, ["viga", "story", "case", "section_type", "m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm", "bot_rebar", "top_rebar", "skin_rebar", "solution", "status"], max_rows=None),
         ])
 
@@ -1661,7 +1619,8 @@ def _write_pdf_full_reports(self, path: str):
             ])
 
     elif scope == "Memória de cálculo":
-        mem = _calc_memory_df_labels(summary)
+        from .advanced import _calc_memory_df_advanced
+        mem = _calc_memory_df_advanced(results)
         story.extend([
             Paragraph("Memória de cálculo", styles["Section"]),
             self._pdf_df_table(mem, ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"], max_rows=None),
@@ -1679,6 +1638,8 @@ def _write_pdf_full_reports(self, path: str):
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
 
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_full_reports

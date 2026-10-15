@@ -1,0 +1,97 @@
+"""Exercise the real Tk event loop and exports on a Windows runner.
+
+Enable explicitly; ordinary headless test discovery skips this test.
+"""
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import pandas as pd
+
+
+@unittest.skipUnless(sys.platform=='win32' and os.environ.get('BEAMSEC2_GUI_TESTS')=='1',
+                     'Windows Tk integration enabled only in the GUI CI step')
+class WindowsGUIIntegrationTests(unittest.TestCase):
+    def test_import_calculate_els_and_exports(self):
+        from beams_ec2.release import BeamsEC2App
+        app=BeamsEC2App()
+        app.withdraw()
+        failures=[]
+        completed=[]
+        def error(*args,**kwargs):
+            failures.append(str(args))
+            app.quit()
+        app.report_callback_exception=lambda *args: error(*args)
+        rows=[]
+        for case,factor in [('101 (C)',1.0),('201 (C)',0.6),('202 (C)',0.8),('203 (C)',0.7)]:
+            for index,x in enumerate([0,1.5,3,4.5,6]):
+                rows.append({'Member/Node/Case':f'1/{index+1}/{case}',
+                             'Station (m)':x,'Length (m)':6,'HY (cm)':30,'HZ (cm)':60,
+                             'Material':'C30/37','MY (kNm)':factor*100*(1-((x-3)/3)**2),
+                             'FZ (kN)':factor*(50-x*100/6),'MX (kNm)':0,
+                             'Support Condition':'Entre apoios (y0=yL=0)'})
+        def start():
+            try:
+                app.var_elu_cases.set('101')
+                app.var_sls_char_cases.set('202')
+                app.var_sls_freq_cases.set('203')
+                app.var_sls_qp_cases.set('201')
+                app.load_df(pd.DataFrame(rows),'CI integration')
+                app.run_design()
+                app.run_design()  # A second click must not start a second worker.
+                app.var_cover.set('99')  # The running calculation keeps its snapshot.
+                app.after(50,poll)
+            except Exception as exc:
+                error(exc)
+        def poll():
+            if app.status_var.get().startswith('Cálculo concluído'):
+                completed.append(True)
+                app.quit()
+            else:
+                app.after(50,poll)
+        def timeout():
+            error('Timeout waiting for calculation: '+app.status_var.get())
+        try:
+            with patch('tkinter.messagebox.showerror',error), patch('tkinter.messagebox.showwarning',error):
+                app.after(10,start)
+                watchdog=app.after(30000,timeout)
+                app.mainloop()
+                app.after_cancel(watchdog)
+                self.assertFalse(failures, failures)
+                self.assertTrue(completed,'Calculation did not complete')
+                self.assertEqual(len(app.df_results),1)
+                self.assertEqual(app.df_results.iloc[0]['cover_mm'],35)
+                self.assertFalse(app._calculation_running)
+                self.assertIn('df_sls_points',vars(app))
+                parameters=app._parameters_df()
+                cover=parameters[parameters.iloc[:,0].astype(str).str.contains('Recobrimento')].iloc[0,1]
+                self.assertEqual(float(cover),35)
+                self.assertIn('service_wk_est_mm',app.df_results)
+                self.assertEqual(app.df_results.iloc[0]['service_combinations_checked'],3)
+                self.assertEqual(app.df_results.iloc[0]['service_group_crack'],'ELS_QP')
+                self.assertEqual(app.df_results.iloc[0]['service_group_steel'],'ELS_CAR')
+                with tempfile.TemporaryDirectory() as folder:
+                    xlsx=Path(folder)/'result.xlsx'
+                    app._write_excel(str(xlsx))
+                    self.assertGreater(xlsx.stat().st_size,1000)
+                    from openpyxl import load_workbook
+                    workbook=load_workbook(xlsx,read_only=True)
+                    sheet=workbook['04A_Grupos_Combinacoes']
+                    values=list(sheet.values)
+                    column=values[0].index('combination_group')
+                    self.assertEqual({row[column] for row in values[1:]},{'ELU','ELS_CAR','ELS_FREQ','ELS_QP'})
+                    workbook.close()
+                    for index,scope in enumerate(['Resumo executivo','Relatório técnico','Memória de cálculo']):
+                        app.var_pdf_scope.set(scope)
+                        pdf=Path(folder)/f'report{index}.pdf'
+                        app._write_pdf(str(pdf))
+                        self.assertTrue(pdf.read_bytes().startswith(b'%PDF-'))
+                        self.assertGreater(pdf.stat().st_size,1000)
+        finally:
+            app.destroy()
+
+
+if __name__=='__main__':
+    unittest.main()

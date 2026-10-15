@@ -85,7 +85,8 @@ def _read_delimited_text(text: str) -> tuple[pd.DataFrame, str]:
             frame = pd.read_csv(
                 io.StringIO(text),
                 sep=sep,
-                engine="python",
+                engine="c",
+                nrows=50,
                 dtype=str,
                 keep_default_na=False,
                 na_filter=False,
@@ -106,7 +107,9 @@ def _read_delimited_text(text: str) -> tuple[pd.DataFrame, str]:
         candidates.append((score, sep, frame))
 
     if candidates:
-        _, sep, frame = max(candidates, key=lambda item: item[0])
+        _, sep, _ = max(candidates, key=lambda item: item[0])
+        frame = pd.read_csv(io.StringIO(text), sep=sep, engine="c", dtype=str,
+                            keep_default_na=False, na_filter=False)
         frame.columns = [str(c).strip().lstrip("\ufeff") for c in frame.columns]
         return frame, sep
 

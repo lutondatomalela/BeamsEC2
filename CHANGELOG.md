@@ -1,3 +1,72 @@
+# v0.2.0-rc7 - 2026-10-15
+
+- Posições opcionais: tabelas por nós e rótulos sem coordenadas continuam a permitir verificações das secções disponíveis.
+- ELS de tensões e fissuração separados da integração da flecha. Diagramas ausentes/ambíguos não anulam as verificações locais com armadura uniforme adotada; máximos entre secções não ficam demonstrados.
+- Flechas sem dados suficientes ficam sem valor; perfis de dispensas não são gerados para diagramas ELU incompletos.
+- Interface e instruções deixam de apresentar Station como coluna obrigatória.
+- Estribos: ramos exteriores verificados para torção, permitindo ramos interiores adicionais para corte.
+
+# v0.2.0-rc6 - 2026-10-15
+
+- Reutilização das verificações ELS da mesma secção/armadura, mantendo resultados por combinação ELU e invalidando a reutilização quando mudam geometria, aço, profundidades ou recobrimento.
+- Pontos e combinações ELS deixam de ser duplicados por cada combinação ELU com a mesma armadura.
+- Pormenorização calculada uma vez por armadura comum e barra; seleção explícita de ELU exclui ELS numerados.
+- Mensagens de progresso distinguem ELU, ELS, pormenorização e preparação dos resultados.
+- Ensaio local com 704 970 linhas: núcleo ELU/ELS ~15 s e pormenorização ~2 s (sem leitura/importação); antes, núcleo ~109 s.
+
+# v0.2.0-rc5 - 2026-10-15
+
+- Importação Robot Member/Point (m)/Case: posições extraídas dos rótulos x, user/auto x, origin e end.
+- Preservação dos rótulos +/- sem deslocar a identificação da combinação.
+- Tabelas por nós sem posições aceites para secções; não são inventadas coordenadas para integrar flechas.
+- Ensaio do executável utiliza o formato por pontos, sem coluna Station separada.
+
+# v0.2.0-rc4 - 2026-10-15
+
+- Seleções independentes de ELU, ELS característica, frequente e quase-permanente, por números/listas/intervalos.
+- Rejeição de sobreposições e números inexistentes; casos não classificados deixam de ser tratados como ELU.
+- Critérios separados: tensões CAR, fissuração/flecha QP e limite de fluência linear QP; FREQ informativo e rastreável.
+- Falta de CAR/QP assinalada sem substituir um regime por outro; tensão QP > 0,45 fck exige revisão da fluência não linear.
+- Classificação documentada na interface, nos parâmetros, no XLSX e no PDF; folha 04A_Grupos_Combinacoes.
+- Compilação automática Windows x64; ensaio dentro do executável com importação, cálculo e exportações, antes de disponibilizar o artefacto.
+- Distribuição acompanhada de commit, dependências e SHA256.
+- 79 testes gerais e um ensaio de integração Windows, além das dez verificações internas.
+
+# v0.2.0-rc3 - 2026-10-15
+
+- Armadura comum por membro, verificada em todas as combinações; controlo de convergência e de geometria consistente.
+- Áreas longitudinais de torção reservadas por face e excluídas da resistência à flexão; varões laterais também em vigas baixas.
+- Espaçamento dos varões longitudinais de torção limitado a 350 mm; confirmação do fecho/amarração nos desenhos continua necessária.
+- Fluência nula antes ou no instante de aplicação da carga; referências analíticas adicionais de fluência, retração e curvatura de retração.
+- Dados/parâmetros fixados ao iniciar o cálculo, prevenção de duplo clique e de substituição da tabela em curso; relatórios usam os parâmetros do cálculo concluído.
+- PDF com rótulos e unidades legíveis, fontes incorporadas quando disponíveis, grupos de colunas e paginação sem perda de linhas.
+- Memória PDF com todas as combinações, convergência da armadura comum e parcelas reservadas à torção; relatório técnico com verificações ELU de todos os casos.
+- 62 testes gerais e um ensaio de integração Windows, além das dez verificações internas.
+
+# v0.2.0-rc2 - 2026-10-15
+
+- Seleção iterativa das armaduras com posições reais e estribos de 6/8/10 mm.
+- Armadura comprimida para os dois sinais do momento; rejeição explícita de não convergência.
+- Verificação de espaço entre faces, área máxima por face, transição banzo/alma e espaçamento transversal dos ramos.
+- Armadura mínima com largura média da zona tracionada nas secções T.
+- ELS: betão substituído por aço descontado na zona comprimida; tensão no aço não fissurado com a inércia correspondente.
+- Referências analíticas independentes para secção homogeneizada, fissuração, curvatura e flecha.
+- Ensaio de integração Windows com aplicação Tk real, cálculo ELU/ELS e exportações XLSX/PDF.
+- 45 testes gerais e um ensaio Windows, além das dez verificações internas existentes.
+
+# v0.2.0-rc1 - 2026-10-14
+
+- Resistência à flexão com compatibilidade de extensões e equilíbrio de forças.
+- Interação corte/torção (6.29), inclinação comum e área de dois ramos fechados.
+- Torção não nula conservada; modelo conservador da alma para secções I.
+- Validação de esforços, dimensões, estações, material e dados variáveis.
+- Revisão obrigatória para N-M, flexão biaxial, eixos alternativos, betões de alta resistência e pormenorização de torção.
+- Todas as combinações conservadas; resumos sem mistura de casos e sem ocultação de Verificar.
+- Estações ELS em metros, sem reescala nem média de momentos conflitantes.
+- Exportação XLSX com erros de folhas adicionais explícitos.
+- 28 testes de regressão adicionais e CI Windows/Linux.
+- Avaliação técnica e limitações em docs/ROBUSTNESS_REVIEW.md.
+
 # Changelog
 
 ## v0.1.2

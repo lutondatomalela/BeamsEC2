@@ -56,6 +56,8 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 _build_beam_envelopes_full_reports = build_beam_envelopes
 
 def build_beam_envelopes(df: pd.DataFrame, moment_axis="my", shear_axis="fz", torsion_axis="mx") -> pd.DataFrame:
+    from .validation import validate_table
+    validate_table(df, moment_axis, shear_axis, torsion_axis)
     env = _build_beam_envelopes_full_reports(df, moment_axis=moment_axis, shear_axis=shear_axis, torsion_axis=torsion_axis)
     if env is None or env.empty or df is None or df.empty:
         return env
@@ -64,6 +66,10 @@ def build_beam_envelopes(df: pd.DataFrame, moment_axis="my", shear_axis="fz", to
     keep = group_cols + [c for c in _EXTRA_GEOM_Geometry if c in first.columns]
     first = first[keep]
     env = env.merge(first, on=group_cols, how="left", suffixes=("", "_geom"))
+    other_moment = "mz" if moment_axis == "my" else "my"
+    if other_moment in df:
+        biaxial = df.groupby(group_cols, dropna=False)[other_moment].agg(lambda x: x.abs().max()).reset_index()
+        env = env.merge(biaxial.rename(columns={other_moment: "biaxial_m_ed_kNm"}), on=group_cols, how="left")
     # A classificação é visível já no separador Envelopes, antes do cálculo.
     types=[]; summaries=[]; sources=[]; confidences=[]; errors=[]; notes=[]
     for _, rr in env.iterrows():
@@ -384,15 +390,14 @@ def _torsion_requirements_profile_geometry(self, TEd_kNm, section, fck, fcd, fyd
 BeamDesigner.torsion_requirements = _torsion_requirements_profile_geometry
 
 
-def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str) -> RebarChoice:
+def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str, phi_st=8.0, perimeter=False) -> RebarChoice:
     req = max(float(As_req or 0.0),0.0)
-    phi_st = 8.0
     candidates = []
     diameter_sets = [[12.0,16.0,20.0],[25.0]]
     for diameters in diameter_sets:
         for phi in diameters:
             aphi = bar_area_mm2(phi)
-            n0 = max(2,int(math.ceil(req/max(aphi,1e-9))))
+            n0 = max(2,int(math.ceil(req/max(aphi,1e-9)-1e-9)))
             for n in range(n0,min(n0+10,24)):
                 area=n*aphi
                 for layers in [1,2]:
@@ -408,12 +413,17 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
                         z=depth if face=="top" else section.h_mm-depth
                         if depth >= section.h_mm-self.cover_mm or z<0 or z>section.h_mm:
                             ok=False; break
-                        width=section.width_at_depth(z)
+                        # A bar must fit over its full diameter, including a
+                        # flange/web boundary, rather than only at its centre.
+                        width=min(b for z0,z1,b in section.segments
+                                  if z1 > z-phi/2.0 and z0 < z+phi/2.0)
                         avail=width-2.0*(self.cover_mm+phi_st)
                         if count==1:
                             clear=avail-phi
                         else:
                             clear=(avail-count*phi)/(count-1)
+                        if perimeter and i==0 and clear+phi > 350.0+1e-9:
+                            ok=False; break
                         if clear+1e-9<req_clear:
                             ok=False; break
                         layer_depths.append(depth); clears.append(clear); widths.append(width)
@@ -424,6 +434,7 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
                     # quando as gamas correntes não produzem solução.
                     score=(layers,n,area-req,phi)
                     reb=RebarChoice(n,phi,area,layers,max(counts),centroid,min(clears),"OK")
+                    reb.layer_depths_mm=layer_depths
                     reb.layer_counts=counts
                     reb.layer_widths_mm=widths
                     reb.layout="+".join(str(c) for c in counts)
@@ -440,6 +451,15 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
 
 def _detailing_profile_geometry(self, section, bot, top, stir):
     issues=[]
+    if bot.n_bars and top.n_bars:
+        bottom_extent=max(getattr(bot,"layer_depths_mm",[bot.centroid_from_edge_mm]))+bot.phi_mm/2.0
+        top_extent=max(getattr(top,"layer_depths_mm",[top.centroid_from_edge_mm]))+top.phi_mm/2.0
+        gap=section.h_mm-bottom_extent-top_extent
+        if gap < self.min_clear_spacing(max(bot.phi_mm,top.phi_mm))-1e-9:
+            issues.append("espaçamento vertical insuficiente entre armaduras superior e inferior")
+    Ac=section.gross_properties()[0]
+    if max(bot.area_mm2,top.area_mm2)>0.04*Ac+1e-8:
+        issues.append("armadura de uma face excede 0,04 Ac fora de emendas (EC2 9.2.1.1)")
     for label,reb in [("inferior",bot),("superior",top)]:
         if reb.status!="OK": issues.append(f"armadura {label} não cabe na geometria real")
         if reb.n_bars and reb.n_bars<2: issues.append(f"armadura {label}: mínimo de 2 varões")
@@ -455,6 +475,10 @@ def _detailing_profile_geometry(self, section, bot, top, stir):
 
 
 def _design_one_geometry(self, row: pd.Series) -> Dict:
+    for key in ("m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm"):
+        value = safe_float(row.get(key))
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"Esforço de envelope inválido: {key}")
     material=str(row.get("material",DEFAULT_CONCRETE_CLASS) or DEFAULT_CONCRETE_CLASS)
     fck=parse_concrete_strength(material)
     cp=concrete_props(fck,alpha_cc=self.alpha_cc,gamma_c=self.gamma_c)
@@ -480,36 +504,55 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     tors=self.torsion_requirements(TEd,section,fck,cp["fcd"],fyd)
     torsion_active=str(tors.get("torsion_considered","Não"))=="Sim"
     Asl_t=float(tors.get("Asl_torsion_req_mm2") or 0.0)
-    if torsion_active and h>=SKIN_REINF_MIN_HEIGHT_MM:
-        Atop=Abot=0.25*Asl_t; As_skin_req=0.25*Asl_t
-        As_skin_req=max(As_skin_req,0.001*bw*max(h-SKIN_REINF_MIN_HEIGHT_MM,0.0)/2.0)
-        skin_note="Aplicável: h >= 40 cm"
-    elif torsion_active:
-        Atop=Abot=0.50*Asl_t; As_skin_req=0.0; skin_note="Não aplicável: h < 40 cm"
+    if torsion_active:
+        # Reserve full edge shares; corner bars are not counted a second time
+        # as side reinforcement. These areas cannot also resist flexure.
+        Atop=Abot=Asl_t*bw/(2.0*(bw+h))
+        As_skin_req=Asl_t*h/(2.0*(bw+h))
+        skin_note="Armadura longitudinal de torção distribuída por quatro faces"
     elif h>SKIN_REINF_MIN_HEIGHT_MM:
         Atop=Abot=0.0; As_skin_req=0.001*bw*(h-SKIN_REINF_MIN_HEIGHT_MM)/2.0
         skin_note="Armadura de pele mínima para h > 40 cm"
     else:
         Atop=Abot=As_skin_req=0.0; skin_note="Não aplicável"
+    As_skin_req=max(As_skin_req,finite(row.get('_floor_skin'),0))
     skin_choice=_choose_skin_rebar_detailing(As_skin_req)
-    As_req_bot=max(As_min_bot,flex_pos["As_req"]+Abot)
-    As_req_top=max(As_min_top,flex_neg["As_req"]+flex_pos.get("As_comp_req",0.0)+Atop)
-    bot=_choose_face_rebar_geometry(self,As_req_bot,section,"bottom")
-    top=_choose_face_rebar_geometry(self,As_req_top,section,"top")
-    d_bot=h-bot.centroid_from_edge_mm if bot.n_bars else d0
-    d_top=h-top.centroid_from_edge_mm if top.n_bars else d0
-    d2_top=top.centroid_from_edge_mm if top.n_bars else d20
-    d2_bot=bot.centroid_from_edge_mm if bot.n_bars else d20
-    Mrd_pos=self.flexural_capacity(bot.area_mm2,top.area_mm2,section,d_bot,d2_top,cp["fcd"],fyd)
-    Mrd_neg=self.flexural_capacity(top.area_mm2,bot.area_mm2,section_neg,d_top,d2_bot,cp["fcd"],fyd)
-    eta_pos=Mpos/max(finite(Mrd_pos.get("MRd_kNm")),1e-9) if Mpos>0 else 0.0
-    eta_neg=Mneg/max(finite(Mrd_neg.get("MRd_kNm")),1e-9) if Mneg>0 else 0.0
-    shear=self.shear_requirements(VEd,bw,min(d_bot,d_top),max(bot.area_mm2,top.area_mm2),fck,cp["fcd"],fyd)
-    Asw_total=max(float(shear["Asw_s_min_mm2_per_mm"]),float(shear["Asw_s_shear_req_mm2_per_mm"]))+float(tors.get("Asw_s_torsion_req_mm2_per_mm") or 0.0)
-    stir=self.choose_stirrups(Asw_total,bw,h,min(d_bot,d_top),torsion=torsion_active)
+    from .reinforcement import solve_reinforcement
+    cage = solve_reinforcement(self, section, cp, fyd, Mpos, Mneg, VEd, tors,
+                               _choose_face_rebar_geometry, Abot, Atop, floors=row)
+    bot, top = cage['bot'], cage['top']
+    d_bot, d_top = cage['d_bot'], cage['d_top']
+    d2_bot, d2_top = cage['d2_bot'], cage['d2_top']
+    Mrd_pos, Mrd_neg = cage['Mrd_pos'], cage['Mrd_neg']
+    flex_pos, flex_neg = cage['flex_pos'], cage['flex_neg']
+    As_min_bot, As_min_top = cage['As_min_bot'], cage['As_min_top']
+    As_req_bot, As_req_top = cage['As_req_bot'], cage['As_req_top']
+    shear, stir, Asw_total = cage['shear'], cage['stir'], cage['Asw_total']
+    eta_pos=Mpos/max(finite(Mrd_pos.get('MRd_kNm')),1e-9) if Mpos>0 else 0.0
+    eta_neg=Mneg/max(finite(Mrd_neg.get('MRd_kNm')),1e-9) if Mneg>0 else 0.0
+    closed_cage=torsion_active or bool(row.get('_force_closed',False))
+    side_pitch=None
+    if closed_cage:
+        side_span=max(0,h-2*(self.cover_mm+float(stir['phi_st_mm']))-max(bot.phi_mm,top.phi_mm))
+        min_side_bars=max(1,int(math.ceil(side_span/350.0))-1)
+        skin_choice=_choose_skin_rebar_detailing(As_skin_req,min_bars=min_side_bars)
+        side_pitch=side_span/(int(skin_choice['skin_n_per_face'])+1)
     els=self.serviceability(row,bot.area_mm2,top.area_mm2,d_bot,d_top,section,cp)
     det=_detailing_profile_geometry(self,section,bot,top,stir)
     failures=[]
+    if closed_cage and side_pitch is not None:
+        phi_side=float(skin_choice['skin_phi_mm'])
+        free_side=side_pitch-(max(bot.phi_mm,top.phi_mm)+phi_side)/2.0
+        if side_pitch>350+1e-9 or free_side<self.min_clear_spacing(max(phi_side,bot.phi_mm,top.phi_mm))-1e-9:
+            failures.append("espaçamento dos varões laterais de torção não conforme")
+    if float(skin_choice.get('skin_area_prov_face_mm2',0))+1e-8<As_skin_req:
+        failures.append("armadura lateral insuficiente")
+    if not cage["reinforcement_converged"]:
+        failures.append("dimensionamento iterativo da armadura não convergiu para uma solução admissível")
+    eta_vt = (abs(VEd) / max(finite(shear.get("VRd_max_kN")), 1e-9)
+              + abs(TEd) / max(finite(tors.get("TRd_max_kNm")), 1e-9))
+    if eta_vt > 1.0 + 1e-6:
+        failures.append("interação corte/torção não verifica (EC2 6.29)")
     if bot.status!="OK" or top.status!="OK": failures.append("armadura longitudinal não cabe na geometria real")
     if eta_pos>1.0+1e-6: failures.append("flexão positiva não verifica")
     if eta_neg>1.0+1e-6: failures.append("flexão negativa não verifica")
@@ -524,7 +567,7 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     if failures:
         low=reason.lower()
         ftype="flexao" if "flexão" in low else ("esforco_transverso" if "transverso" in low else ("torcao" if "torção" in low else ("pormenorizacao" if "pormenoriz" in low or "cabe" in low else "dados")))
-    stir_label="Estribos fechados" if torsion_active else "Estribos"
+    stir_label="Estribos fechados" if closed_cage else "Estribos"
     sol=f"Inf.: {bot.label}; Sup.: {top.label}; {stir_label} Ø{int(stir['phi_st_mm'])}/{int(stir['stirrup_legs'])}r // {float(stir['s_st_mm'])/10:.1f} cm"
     if As_skin_req>1e-6: sol+=f"; pele/alma: {skin_choice['skin_rebar']}"
     Acalc,zbar,Iycalc,Izcalc=section.gross_properties()
@@ -570,6 +613,37 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
         "shortlist_text":f"Inf {bot.label} ({getattr(bot,'layout','')}); Sup {top.label} ({getattr(top,'layout','')}); geometria {section.geometry_summary}",
     }
     out["beam_ref"]=_beam_label_labels(out)
+    out["reinforcement_iterations"] = cage["reinforcement_iterations"]
+    out["reinforcement_converged"] = cage["reinforcement_converged"]
+    out["reinforcement_stirrup_assumed_mm"] = cage["reinforcement_stirrup_assumed_mm"]
+    out["torsion_reserved_bot_mm2"]=Abot
+    out["torsion_reserved_top_mm2"]=Atop
+    out["torsion_side_pitch_mm"]=side_pitch
+    out["closed_cage"]=closed_cage
+    out["eta_vt"] = eta_vt
+    out["eta_global"] = max(out["eta_global"], eta_vt)
+    out["torsion_relevance_limit"] = 0.0
+    out["flexure_method"] = "EC2 6.1: compatibilidade de extensões e equilíbrio N=0 (fck <= 50 MPa)"
+    reviews = []
+    if str(row.get("moment_axis", "MY")).upper() != "MY" or str(row.get("shear_axis", "FZ")).upper() != "FZ":
+        reviews.append("eixos alternativos: confirmar rotação da geometria HY/HZ; não validada automaticamente")
+    if fck > 50:
+        reviews.append("betão de alta resistência: bloco e extensões específicos não validados")
+    if abs(finite(row.get("n_ed_kN"))) > 1e-8:
+        reviews.append("esforço normal presente: interação N-M não implementada")
+    if abs(finite(row.get("biaxial_m_ed_kNm"))) > 1e-8:
+        reviews.append("flexão biaxial presente: interação My-Mz não implementada")
+    if row.get("material_source") == "fallback":
+        reviews.append("classe de betão em falta; confirmar C30/37 assumido")
+    if section.confidence == "Baixa" and any(finite(row.get(c)) > 0 for c in ("ax", "iy", "iz")):
+        reviews.append("propriedades importadas incompatíveis com a geometria rectangular assumida")
+    if torsion_active:
+        reviews.append("confirmar fecho e amarração dos estribos de torção e disposição dos varões nos desenhos")
+    if reviews:
+        if out["status"] == "OK":
+            out["status"] = "Verificar"
+        out["recommendations"] = "; ".join(reviews)
+        out["failure_reason"] = "; ".join(x for x in (out["failure_reason"], out["recommendations"]) if x)
     return out
 
 BeamDesigner.design_one = _design_one_geometry
@@ -775,8 +849,8 @@ def _write_excel_geometry(self, path: str):
             vals=[str(ws.cell(i,j).value) for i in range(1,min(ws.max_row,200)+1) if ws.cell(i,j).value is not None]
             ws.column_dimensions[get_column_letter(j)].width=min(max([len(v) for v in vals]+[10])+2,45)
         wb.save(path)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError("Exportação XLSX incompleta.") from exc
 
 BeamsEC2App._write_excel = _write_excel_geometry
 
@@ -802,7 +876,7 @@ def _write_pdf_geometry(self, path: str):
     doc.title=APP_NAME; doc.author=""; doc.subject=APP_SUBJECT
     story=[_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy()
     if geom is not None and not geom.empty:
@@ -822,6 +896,8 @@ def _write_pdf_geometry(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_geometry
