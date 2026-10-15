@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.2.0-rc6"
+APP_VERSION = "v0.2.0-rc7"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -31,11 +31,12 @@ for _module in (_base, _design, _reporting, _geometry, _serviceability, _impleme
     _module.APP_TABLE_DESCRIPTION = APP_TABLE_DESCRIPTION
 
 TABLE_COLUMNS_REQUIRED = [
-    "Member/Node/Case", "Station (m)", "FZ (kN)", "MX (kNm)", "MY (kNm)",
+    "Member/Node/Case", "FZ (kN)", "MX (kNm)", "MY (kNm)",
     "Length (m)", "Material", "HY (cm)", "HZ (cm)",
 ]
 TABLE_COLUMNS_RECOMMENDED = ["Name", "Story"]
 TABLE_COLUMNS_ELS = [
+    "Station (m)",
     "Support Condition", "As Bot Local (mm2)", "As Top Local (mm2)",
     "Bot Rebar Local", "Top Rebar Local",
 ]

@@ -54,7 +54,7 @@ def solve_reinforcement(designer, section, cp, fyd, mpos, mneg, ved, tors,
             shear = designer.shear_requirements(ved, bw, min(db, dt), min(bot.area_mm2, top.area_mm2), cp['fck'], cp['fcd'], fyd)
             asw = max(shear['Asw_s_min_mm2_per_mm'], shear['Asw_s_shear_req_mm2_per_mm']) + (tors.get('Asw_s_torsion_req_mm2_per_mm') or 0.0)
             asw=max(asw,float(floors.get('_floor_asw',0)))
-            stir = designer.choose_stirrups(asw, bw, h, min(db, dt), active, phi_st_mm=phi_st)
+            stir = designer.choose_stirrups(asw, bw, h, min(db, dt), active, phi_st_mm=phi_st, torsion_asw_s=(tors.get('Asw_s_torsion_req_mm2_per_mm') or 0.0))
             cap_ok = mrp['MRd_kNm'] + 1e-7 >= mpos and mrn['MRd_kNm'] + 1e-7 >= mneg
             # Repeat at the adopted positions before accepting any design.
             stable = last is not None and (bot.label, top.label, bot.layers, top.layers) == last['signature']

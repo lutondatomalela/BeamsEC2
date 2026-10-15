@@ -41,12 +41,12 @@ Não é necessário instalar Python nem utilizar o terminal. Depois de descarreg
 
 Também são aceites tabelas `Member/Point (m)/Case`, com posições `user x=…`, `auto x=…`, `x=…`, `origin (…)` e `end (…)`. Rótulos `+/- MY x=…` são preservados. Sem posições, as tabelas por nós permitem verificar as secções disponíveis, mas a flecha fica sem dados suficientes. Posições inválidas explicitamente fornecidas continuam a impedir a importação.
 
-Cada linha representa uma estação de uma viga numa combinação de acções. Devem ser utilizadas várias estações ao longo de cada membro; para ELS recomendam-se pelo menos cinco.
+Cada linha representa uma secção disponível de uma viga numa combinação de ações. Aceitam-se tabelas por nós sem posições e tabelas por pontos. As posições são opcionais para ELU e para tensões/fissuração nas secções fornecidas. A flecha por integração requer um diagrama com posições ao longo do vão; recomendam-se pelo menos cinco pontos.
 
 Colunas obrigatórias:
 
 ```text
-Member/Node/Case | Station (m) | FZ (kN) | MX (kNm) | MY (kNm) |
+Member/Node/Case | FZ (kN) | MX (kNm) | MY (kNm) |
 Length (m) | Material | HY (cm) | HZ (cm)
 ```
 
@@ -183,3 +183,5 @@ Get-Content "out/frozen check/smoke-test.json"
 O ensaio deve terminar com `"ok": true`. Sem `--smoke-test`, o executável abre a interface habitual. A compilação utiliza PyInstaller fixado e regista as versões efectivamente instaladas; não garante executáveis idênticos byte a byte. Os artefactos de CI destinam-se a validação da candidata e não substituem uma release aprovada.
 
 Os cálculos ELS equivalentes são reutilizados para a mesma secção e armadura. Os resultados ELU continuam separados por combinação; os pontos ELS e a pormenorização da armadura comum são apresentados sem repetições por combinação ELU.
+
+Sem posições ou com momentos diferentes na mesma posição, o programa calcula tensões e fissuração nas secções fornecidas com a armadura uniforme adotada. A flecha fica sem valor e identificada como «Dados insuficientes». Não são gerados perfis de dispensas de varões a partir de diagramas ELU incompletos. Estes resultados não demonstram os máximos entre secções importadas.

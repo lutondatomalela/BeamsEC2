@@ -278,6 +278,60 @@ def _local_rebar_profiles_advanced(group: pd.DataFrame, length_m: float, r: pd.S
     return x, result
 
 
+def _section_only_sls(app, r, group, case_label, source_note, params,
+                      p, cp, Ecm, Ec_eff, eps_cs, d_bot, d_top, reason):
+    """Check supplied sections without inventing a span diagram or node positions."""
+    moment = str(app.var_moment_axis.get()).lower()
+    states = _section_sls_states_serviceability(
+        p, finite(r.get("as_prov_bot_mm2"), 0), finite(r.get("as_prov_top_mm2"), 0),
+        d_bot, d_top, Ecm, Ec_eff, cp["fctm"], eps_cs)
+    values = []
+    # Uniform adopted cage: repeated moments need only one section calculation.
+    for mm in group[moment].drop_duplicates():
+        face = "bot" if mm >= 0 else "top"
+        response = _local_sls_response_serviceability(
+            mm, states, "long" if params.long_term else "short",
+            params.beta_tension_stiffening if params.long_term else 1.0,
+            cp["fctm"], Ecm, 200000.0, p,
+            _rebar_phi_serviceability(r.get(face + "_rebar", ""), 12.0),
+            finite(r.get(face + "_clear_spacing_mm"), 999.0),
+            finite(r.get("cover_mm"), 35), finite(r.get("phi_st_mm"), 8),
+            params.kt_crack if params.long_term else 0.6, eps_cs)
+        values.append(dict(member=r.get("member", ""), service_case=case_label,
+                           service_regime=params.regime, x_m=float("nan"),
+                           M_service_kNm=float(mm), **response))
+    wk = max(v["wk_mm"] for v in values)
+    ss = max(v["sigma_s_MPa"] for v in values)
+    sc = max(v["sigma_c_MPa"] for v in values)
+    slim = 0.8 * finite(r.get("fyk_MPa"), 500)
+    clim = (0.45 if params.long_term else 0.6) * cp["fck"]
+    result = dict(service_combination=case_label, service_case_source=source_note,
+                  service_regime=params.regime, service_diagram_quality="Insuficiente",
+                  service_diagram_source=reason, service_points_imported=len(group),
+                  service_points_integrated=0, service_wk_est_mm=wk,
+                  service_wk_lim_mm=params.crack_limit_mm, service_sigma_s_MPa=ss,
+                  service_sigma_s_lim_MPa=slim, service_sigma_c_MPa=sc,
+                  service_sigma_c_lim_MPa=clim,
+                  service_crack_status="OK" if wk <= params.crack_limit_mm else "Não verifica",
+                  service_stress_status="OK" if ss <= slim else "Não verifica",
+                  service_concrete_status="OK" if sc <= clim else "Não verifica",
+                  service_deflection_status="Dados insuficientes",
+                  service_status="Dados insuficientes",
+                  service_note="Tensões e fissuração nas secções fornecidas, com armadura uniforme adotada. "
+                  "Flecha não calculada: " + reason + ". Máximos entre secções não demonstrados.")
+    for key in ("instant", "final", "est", "lim"):
+        result["service_deflection_" + key + "_mm"] = float("nan")
+    if any(result[k] == "Não verifica" for k in
+           ("service_crack_status", "service_stress_status", "service_concrete_status")):
+        result["service_status"] = "Não verifica"
+    if "fx" in group and group.fx.abs().max()*1000 > 0.1*p.gross_properties()[0]*cp["fctm"]:
+        for key in ("crack", "stress", "concrete"):
+            result["service_" + key + "_status"] = "Dados insuficientes"
+        result["service_status"] = "Dados insuficientes"
+        result["service_note"] += " Esforço axial relevante: requer verificação N-M."
+    return result, values
+
+
 def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_label: str, source_note: str, params: SLSParametersAdvanced):
     import numpy as np
     p = _profile_from_result_serviceability(r)
@@ -299,7 +353,8 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     moment_col = str(axis_var.get() if axis_var is not None else "MY").lower()
     x_m, M_pts, quality, diagram_source = _moment_diagram_serviceability(group, finite(r.get("length_m"), 0.0), moment_col)
     if len(x_m) < 2:
-        return {"service_status": "Dados insuficientes", "service_note": "Flecha não verificada: diagrama de momentos ELS indisponível.", "service_diagram_quality": "Insuficiente"}, []
+        return _section_only_sls(app, r, group, case_label, source_note, params,
+                                 p, cp, Ecm, Ec_eff, eps_cs, d_bot, d_top, diagram_source)
     L_m = max(finite(r.get("length_m"), 0.0), float(x_m[-1]))
     x_grid_m = np.linspace(0.0, L_m, max(201, 40 * (len(x_m) - 1) + 1))
     M_grid = np.interp(x_grid_m, x_m, M_pts)
@@ -711,13 +766,18 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         xgrid = np.linspace(0.0, L, 101)
         pos_env = np.zeros_like(xgrid)
         neg_env = np.zeros_like(xgrid)
+        complete_profiles = True
         for case, grp in cand.groupby("case", dropna=False):
             x, M, _, _ = _moment_diagram_serviceability(grp, L, moment_col)
-            if len(x) < 2:
+            if len(x) < 3:
+                complete_profiles = False
                 continue
             mg = np.interp(xgrid, x, M)
             pos_env = np.maximum(pos_env, np.maximum(mg, 0.0))
             neg_env = np.maximum(neg_env, np.maximum(-mg, 0.0))
+        if not complete_profiles:
+            rows[-1]["detailing_basis"] += "; sem perfil de dispensas: diagrama ELU incompleto"
+            continue
         cp = concrete_props(fck, gamma_c=DEFAULT_GAMMA_C_Reporting)
         bw = p.web_mm
         d_bot = finite(r.get("d_bot_mm"), p.h_mm - 50.0)

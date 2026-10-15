@@ -33,7 +33,11 @@ class CommonCageTests(unittest.TestCase):
         self.assertTrue(r.closed_cage.all())
         for key in ['bot_rebar','top_rebar','phi_st_mm','stirrup_legs','s_st_mm','skin_rebar']:
             self.assertEqual(r[key].nunique(),1,key)
-        self.assertTrue((r.stirrup_legs==2).all())
+        self.assertTrue((r.stirrup_legs>=2).all())
+        # Only the two outer legs resist torsion, even with extra shear legs.
+        from beams_ec2.base import bar_area_mm2
+        self.assertTrue((2*r.phi_st_mm.map(bar_area_mm2)/r.s_st_mm >=
+                         r.Asw_s_torsion_req_mm2_per_m/1000 - 1e-9).all())
 
     def test_mixed_member_geometry_rejected(self):
         _,env=_prepare_input_frames(frame([(100,40,0,{}),(100,40,0,{'HZ (cm)':50})]))

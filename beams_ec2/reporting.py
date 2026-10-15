@@ -1282,7 +1282,7 @@ def _beamdesigner_init_stirrups(self, *args, **kwargs):
 BeamDesigner.__init__ = _beamdesigner_init_stirrups
 
 
-def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool, phi_st_mm=None) -> Dict[str, float | str]:
+def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool, phi_st_mm=None, torsion_asw_s=None) -> Dict[str, float | str]:
     """Escolha construtiva dos estribos.
 
     Regras adoptadas:
@@ -1302,7 +1302,7 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
 
     candidates = []
     for legs in STIRRUP_LEGS_Detailing:
-        if legs < 2 or (torsion and legs != 2):
+        if legs < 2 or (torsion and torsion_asw_s is None and legs != 2):
             continue
         for phi in STIRRUP_DIAMS_Detailing:
             if phi_st_mm is not None and phi != phi_st_mm:
@@ -1315,6 +1315,11 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
             area = legs * bar_area_mm2(phi)
             for s in sorted(allowed_s, reverse=True):
                 provided = area / s
+                if s > s_lim + 1e-9:
+                    continue
+                # Extra shear legs do not increase the outer closed loop's torsion resistance.
+                if torsion and torsion_asw_s is not None and 2 * bar_area_mm2(phi) / s + 1e-12 < torsion_asw_s:
+                    continue
                 if provided + 1e-12 < Asw_s_total:
                     continue
                 # Score construtivo:

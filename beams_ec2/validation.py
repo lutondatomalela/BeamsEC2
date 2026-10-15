@@ -33,7 +33,7 @@ def validate_table(df, moment_axis, shear_axis, torsion_axis):
                   "tf_top", "b_bottom", "tf_bottom", "section_type_input"):
             if c in group and group[c].dropna().nunique() > 1:
                 raise ValueError(f"{c} varia no mesmo membro/caso; dividir o membro em secções constantes.")
-    for material in df.material:
+    for material in df.material.drop_duplicates():
         match = re.fullmatch(r"C\s*(\d+)\s*/\s*(\d+)", str(material).strip(), re.I)
         classes = {(12, 15), (16, 20), (20, 25), (25, 30), (30, 37), (35, 45),
                    (40, 50), (45, 55), (50, 60), (55, 67), (60, 75), (70, 85), (80, 95), (90, 105)}

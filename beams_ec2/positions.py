@@ -17,6 +17,6 @@ def extract_positions(frame):
     frame.loc[start, 'station'] = 0.0
     frame.loc[end, 'station'] = frame.loc[end, 'length']
     frame.loc[start | end, 'station_source'] = 'extremo explícito'
-    unknown = labels.str.fullmatch(r'\d+')
+    unknown = frame['station'].isna() & ~labels.str.contains(r'(?i)\bx\s*=', regex=True)
     frame.loc[unknown, 'station_source'] = 'nó sem posição'
     return frame

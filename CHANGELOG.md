@@ -1,3 +1,11 @@
+# v0.2.0-rc7 - 2026-10-15
+
+- Posições opcionais: tabelas por nós e rótulos sem coordenadas continuam a permitir verificações das secções disponíveis.
+- ELS de tensões e fissuração separados da integração da flecha. Diagramas ausentes/ambíguos não anulam as verificações locais com armadura uniforme adotada; máximos entre secções não ficam demonstrados.
+- Flechas sem dados suficientes ficam sem valor; perfis de dispensas não são gerados para diagramas ELU incompletos.
+- Interface e instruções deixam de apresentar Station como coluna obrigatória.
+- Estribos: ramos exteriores verificados para torção, permitindo ramos interiores adicionais para corte.
+
 # v0.2.0-rc6 - 2026-10-15
 
 - Reutilização das verificações ELS da mesma secção/armadura, mantendo resultados por combinação ELU e invalidando a reutilização quando mudam geometria, aço, profundidades ou recobrimento.

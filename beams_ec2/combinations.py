@@ -76,7 +76,6 @@ def parameters_for_group(base,group):
 
 def apply_check_policy(result,group):
     out=result.copy();out['service_group']=group
-    if result.get('service_status')=='Dados insuficientes':return out
     raw={k:out.get(k) for k in ('service_crack_status','service_deflection_status','service_stress_status','service_concrete_status')}
     for key in raw:out[key]='Informativo'
     if group=='ELS_CAR':
@@ -87,7 +86,9 @@ def apply_check_policy(result,group):
     else:
         active=()
     for key in active:out[key]=raw[key]
-    out['service_status']='Não verifica' if any(out[k]=='Não verifica' for k in active) else 'OK'
+    out['service_status']=('Não verifica' if any(out[k]=='Não verifica' for k in active)
+                           else 'Dados insuficientes' if any(out[k] not in ('OK', 'Informativo') for k in active)
+                           else 'OK')
     if group=='ELS_QP' and out.get('service_creep_status')!='OK' and out['service_status']=='OK':
         out['service_status']='Dados insuficientes'
         out['service_note']=out.get('service_note','')+' Tensão QP superior a 0,45 fck: requer fluência não linear.'
