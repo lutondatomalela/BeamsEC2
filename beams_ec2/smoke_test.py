@@ -1,5 +1,6 @@
 """Opt-in end-to-end check executed by the frozen Windows application."""
 import json
+from importlib import import_module
 from pathlib import Path
 import traceback
 from unittest.mock import patch
@@ -12,6 +13,7 @@ def run_smoke_test(output_directory):
     result = {'ok': False}
     try:
         import pandas as pd
+        import_module('xlrd')
         from .release import APP_VERSION, BeamsEC2App
         from .table_io import read_table_file
 
@@ -85,7 +87,7 @@ def run_smoke_test(output_directory):
                 if pdf.stat().st_size < 1000 or not pdf.read_bytes().startswith(b'%PDF-'):
                     raise RuntimeError(f'Invalid PDF: {name}')
         result = {'ok': True, 'version': APP_VERSION,
-                  'checks': ['Tk', 'XLSX import', 'ELU', 'ELS_CAR', 'ELS_FREQ',
+                  'checks': ['Tk', 'XLS reader availability', 'XLSX import', 'ELU', 'ELS_CAR', 'ELS_FREQ',
                              'ELS_QP', 'XLSX export', 'three PDF reports']}
     except Exception:
         result['error'] = traceback.format_exc()

@@ -35,21 +35,21 @@ jobs:
           architecture: x64
       - run: python -m pip install -r requirements-build.txt
       - name: Build portable application
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name BeamsEC2 BeamsEC2.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name BeamsEC2 --hidden-import xlrd BeamsEC2.py
       - name: Check frozen application
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath "$pwd/dist/BeamsEC2.exe" -ArgumentList "--smoke-test", "$pwd/out/frozen-check" -PassThru
+          $process = Start-Process -FilePath "$pwd/dist/BeamsEC2.exe" -ArgumentList "--smoke-test", "`"$pwd/out/frozen check`"" -PassThru
           if (-not $process.WaitForExit(120000)) {
             $process.Kill()
             throw "Frozen application timed out"
           }
-          if (Test-Path out/frozen-check/smoke-test.json) {
-            Get-Content out/frozen-check/smoke-test.json
+          if (Test-Path "out/frozen check/smoke-test.json") {
+            Get-Content "out/frozen check/smoke-test.json"
           } else {
             throw "Frozen application did not write its check result"
           }
-          $result = Get-Content out/frozen-check/smoke-test.json -Raw | ConvertFrom-Json
+          $result = Get-Content "out/frozen check/smoke-test.json" -Raw | ConvertFrom-Json
           if ($process.ExitCode -ne 0 -or -not $result.ok) {
             throw "Frozen application check failed"
           }
@@ -75,6 +75,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Windows-executable-check
-          path: out/frozen-check/
+          path: out/frozen check/
           retention-days: 14
           if-no-files-found: ignore

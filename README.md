@@ -173,9 +173,9 @@ Em Windows x64 com Python 3.12:
 
 ```powershell
 python -m pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name BeamsEC2 BeamsEC2.py
-Start-Process -FilePath "$pwd/dist/BeamsEC2.exe" -ArgumentList "--smoke-test", "$pwd/out/frozen-check" -Wait
-Get-Content out/frozen-check/smoke-test.json
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name BeamsEC2 --hidden-import xlrd BeamsEC2.py
+Start-Process -FilePath "$pwd/dist/BeamsEC2.exe" -ArgumentList "--smoke-test", "`"$pwd/out/frozen check`"" -Wait
+Get-Content "out/frozen check/smoke-test.json"
 ```
 
 O ensaio deve terminar com `"ok": true`. Sem `--smoke-test`, o executável abre a interface habitual. A compilação utiliza PyInstaller fixado e regista as versões efectivamente instaladas; não garante executáveis idênticos byte a byte. Os artefactos de CI destinam-se a validação da candidata e não substituem uma release aprovada.
