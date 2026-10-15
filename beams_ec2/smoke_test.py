@@ -86,9 +86,38 @@ def run_smoke_test(output_directory):
                 app._write_pdf(str(pdf))
                 if pdf.stat().st_size < 1000 or not pdf.read_bytes().startswith(b'%PDF-'):
                     raise RuntimeError(f'Invalid PDF: {name}')
+            # Repeat through the real event loop with node-only input, as in
+            # legacy Robot exports. No Station column or encoded x is supplied.
+            nodes = pd.DataFrame(rows).rename(columns={
+                'Member/Point (m)/Case': 'Member/Node/Case'})
+            nodes['Member/Node/Case'] = [
+                f"1/{index % 5 + 1}/{case} (C)"
+                for case in (101, 201, 202, 203) for index in range(5)]
+            completed.clear()
+            app.load_df(nodes, 'node-only input')
+            app.after(10, app.run_design)
+            app.after(50, poll)
+            watchdog = app.after(60000, lambda: fail('Node-only calculation timeout'))
+            app.mainloop()
+            app.after_cancel(watchdog)
+            if failures or not completed:
+                raise RuntimeError(f'Node-only calculation failed: {failures}')
+            if not app.df_clean.station.isna().all():
+                raise RuntimeError('Node IDs were converted into positions')
+            if not app.df_sls_combinations.service_sigma_s_MPa.notna().all():
+                raise RuntimeError('Missing section stress results without stations')
+            if app.df_sls_combinations.service_deflection_est_mm.notna().any():
+                raise RuntimeError('Deflections invented without positions')
+            app._write_excel(str(output/'node-only-results.xlsx'))
+            for name, scope in [('summary', 'Resumo executivo'),
+                                ('technical', 'Relatório técnico'),
+                                ('calculation', 'Memória de cálculo')]:
+                app.var_pdf_scope.set(scope)
+                app._write_pdf(str(output/f'node-only-{name}.pdf'))
         result = {'ok': True, 'version': APP_VERSION,
                   'checks': ['Tk', 'XLS reader availability', 'XLSX import', 'ELU', 'ELS_CAR', 'ELS_FREQ',
-                             'ELS_QP', 'XLSX export', 'three PDF reports']}
+                             'ELS_QP', 'XLSX export', 'three PDF reports',
+                             'node-only calculation and exports without positions']}
     except Exception:
         result['error'] = traceback.format_exc()
     finally:
