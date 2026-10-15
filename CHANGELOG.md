@@ -1,3 +1,14 @@
+# v0.2.0-rc3 - 2026-10-15
+
+- Armadura comum por membro, verificada em todas as combinações; controlo de convergência e de geometria consistente.
+- Áreas longitudinais de torção reservadas por face e excluídas da resistência à flexão; varões laterais também em vigas baixas.
+- Espaçamento dos varões longitudinais de torção limitado a 350 mm; confirmação do fecho/amarração nos desenhos continua necessária.
+- Fluência nula antes ou no instante de aplicação da carga; referências analíticas adicionais de fluência, retração e curvatura de retração.
+- Dados/parâmetros fixados ao iniciar o cálculo, prevenção de duplo clique e de substituição da tabela em curso; relatórios usam os parâmetros do cálculo concluído.
+- PDF com rótulos e unidades legíveis, fontes incorporadas quando disponíveis, grupos de colunas e paginação sem perda de linhas.
+- Memória PDF com todas as combinações, convergência da armadura comum e parcelas reservadas à torção; relatório técnico com verificações ELU de todos os casos.
+- 62 testes gerais e um ensaio de integração Windows, além das dez verificações internas.
+
 # v0.2.0-rc2 - 2026-10-15
 
 - Seleção iterativa das armaduras com posições reais e estribos de 6/8/10 mm.

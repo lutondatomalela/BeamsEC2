@@ -1,7 +1,7 @@
 # Avaliação de robustez do BeamsEC2
 
 Data: 15 de outubro de 2026. Base: `f883304d7a80e4f1425d6418546dd96429e8740a`.
-Estado: versão candidata de validação, `v0.2.0-rc2`.
+Estado: versão candidata de validação, `v0.2.0-rc3`.
 
 ## Conclusão técnica
 
@@ -29,6 +29,16 @@ A seleção longitudinal repete a verificação nas posições reais, incluindo 
 
 A interação usa os máximos absolutos V e T do mesmo membro e combinação. Se ocorrerem em estações diferentes, esta verificação é conservadora e pode exigir análise localizada.
 
+## Armadura comum, torção e consistência dos resultados
+
+Os resultados de dimensionamento deixam de representar soluções independentes para cada combinação. A seleção converge para uma armadura longitudinal, estribos e armadura lateral comuns por membro. Cada combinação mantém os seus próprios esforços e coeficientes de utilização. Não se somam máximos de corte/torção de combinações diferentes. Se a geometria mudar entre combinações do mesmo membro, o cálculo é rejeitado.
+
+Na torção, as áreas longitudinais são distribuídas pelas quatro faces proporcionalmente ao perímetro do modelo adotado. As parcelas superior e inferior são retiradas da área disponível para a verificação da flexão; as parcelas laterais são satisfeitas por varões adicionais, sem contar novamente os varões de canto. O modelo de secções T/I continua a exigir validação específica da disposição das subsecções.
+
+A representação G+Q dos efeitos diferidos utiliza um coeficiente de fluência ponderado. Os testes verificam as equações e a integração da curvatura de retração, mas não demonstram uma análise incremental completa com redistribuição de tensões e fissuração ao longo da história.
+
+Os parâmetros são capturados antes do arranque do processo de cálculo e conservados para os relatórios. Não é permitida a substituição da tabela nem uma segunda análise em simultâneo. A exportação durante o cálculo é bloqueada.
+
 ## Base normativa consultada
 
 - NP EN 1992-1-1:2010: 3.1.7 e Quadro 3.1; 6.1; 6.2.3; 6.3.2, expressões (6.28), (6.29) e (6.30); Secção 7.
@@ -39,24 +49,24 @@ Os documentos normativos fornecidos pelo utilizador não são redistribuídos no
 
 ## Verificação executada
 
-- 45 testes de cálculo, importação e exportação, mais um ensaio de integração Tk exclusivo de Windows.
+- 62 testes de cálculo, importação e exportação, mais um ensaio de integração Tk exclusivo de Windows.
 - Referências analíticas de secções ELS, fissuração e integração documentadas em [VALIDATION_CASES.md](VALIDATION_CASES.md).
 - 10 verificações internas já existentes.
 - Exportação XLSX pela cadeia final da aplicação, reabertura e confirmação das folhas de resultados, corte/torção, geometria, ELS e pormenorização.
 - Compilação sintática dos módulos e controlo de espaços do diff.
 - CI preparado para Windows/Linux, Python 3.10 e 3.12; os resultados remotos devem ser consultados no pull request.
 
-Os testes locais foram executados em Linux/Python 3.12. O teste Tk Windows é executado no CI. Não foi realizada inspeção visual da interface Windows nem compilação de um novo executável.
+Os testes locais foram executados em Linux/Python 3.12. O teste Tk Windows é executado no CI. Os três tipos de PDF foram renderizados e inspecionados com um caso sintético de duas vigas e várias combinações. Não foi realizada inspeção visual da interface Windows nem compilação de um novo executável.
 
 ## Limites para aprovação em projeto
 
 1. Flexão composta N-M e flexão biaxial não estão implementadas. A seleção de eixos diferentes de MY/FZ exige confirmação da rotação da geometria; o programa não a valida automaticamente.
 2. Betões acima de C50/60 exigem os coeficientes lambda/eta e extensões próprios. O programa assinala Verificar; os números expedidos não devem ser aprovados sem cálculo dedicado.
 3. As posições são agora recalculadas com o diâmetro de estribo adotado e a disposição por camadas. A busca construtiva é limitada à gama de diâmetros e a duas camadas; Falha pode significar que não foi encontrada solução nessa gama.
-4. A sobreposição da armadura longitudinal de torção com flexão e a distribuição pelo perímetro exigem confirmação. Todos os casos com torção ativa ficam sujeitos a revisão, mesmo que as escoras verifiquem.
+4. A armadura longitudinal de torção é reservada por face e não reutilizada na resistência à flexão. O espaçamento dos varões e a quantidade lateral são controlados. O fecho e as amarrações dos estribos devem ser confirmados nos desenhos; os casos com torção ativa continuam sujeitos a revisão.
 5. O dimensionamento é iterativo, com resistência verificada nas duas direções e armadura comprimida considerada em ambas as faces. A busca não é uma otimização global de todas as disposições possíveis.
 6. O cálculo ELS mantém hipóteses de fluência, retração, condições de apoio e armadura local. A validação integral com exemplos independentes de vigas fissuradas contínuas, regime de combinações e flecha após construção permanece necessária.
 7. Amarrações, emendas, decalagem, armadura de pele, corte entre alma e banzos, aberturas e regiões D devem ser conferidos nos desenhos e com cálculos adequados.
-8. Os resumos apresentam um caso representativo prioritário; a aprovação deve consultar todas as combinações na folha de resultados completos.
+8. Os resumos apresentam uma solução de armadura comum e um caso representativo prioritário. A armadura é novamente verificada em todas as combinações, incluídas no relatório técnico e na memória completa. Falha de convergência da armadura comum impede aprovação.
 
 A versão candidata melhora a segurança dos resultados e a rastreabilidade. A designação de versão estável para projeto deve aguardar os ensaios independentes e de interface acima; não é sustentada apenas pelo número de testes aprovados.

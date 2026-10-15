@@ -938,13 +938,8 @@ class BeamDesigner:
         }
 
     def design_dataframe(self, df: pd.DataFrame, progress_callback=None) -> pd.DataFrame:
-        rows = []
-        total = len(df)
-        for i, (_, row) in enumerate(df.iterrows(), start=1):
-            rows.append(self.design_one(row))
-            if progress_callback and (i == total or i % 10 == 0):
-                progress_callback(i, total)
-        return pd.DataFrame(rows)
+        from .member_design import design_members
+        return design_members(self,df,progress_callback)
 
 
 # ============================================================

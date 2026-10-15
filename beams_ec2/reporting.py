@@ -423,7 +423,7 @@ def _write_pdf_reporting(self, path: str):
     meta = [
         ["Programa", APP_NAME, "Tipo de relatório", scope],
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25", "Torção", f"ηT >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t, Spacer(1, 5*mm)]
@@ -477,6 +477,8 @@ def _write_pdf_reporting(self, path: str):
         canvas.drawString(12*mm, 7*mm, f"{APP_NAME} | {footer_date}")
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_reporting
@@ -1146,7 +1148,7 @@ def _write_pdf_calculation(self, path: str):
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1203,6 +1205,8 @@ def _write_pdf_calculation(self, path: str):
         canvas.drawString(12*mm, 7*mm, f"{APP_NAME} | {footer_date}")
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 
@@ -1529,10 +1533,8 @@ def _pdf_df_table_full_reports(self, df: pd.DataFrame, cols: List[str], max_rows
     resumo, por exemplo V4, podiam não aparecer nos PDFs, apesar de existirem
     no memória de cálculo. Esta versão permite max_rows=None para incluir todas as linhas.
     """
-    memory_cols = ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"]
-    if widths is None and list(cols) == memory_cols:
-        widths = [30, 20, 18, 28, 26, 32, 42, 16, 38, 20]
-    return _old_pdf_df_table_full_reports_base(self, df, cols, max_rows=_all_rows_pdf_limit_full_reports(max_rows), widths=widths)
+    from .pdf_layout import engineering_table
+    return engineering_table(self,df,cols,_all_rows_pdf_limit_full_reports(max_rows),widths,_pdf_styles_report_base())
 
 BeamsEC2App._pdf_df_table = _pdf_df_table_full_reports
 
@@ -1564,7 +1566,7 @@ def _write_pdf_full_reports(self, path: str):
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes", str(n_total), "OK/Falha/Verificar", f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1577,7 +1579,7 @@ def _write_pdf_full_reports(self, path: str):
             Paragraph("Resumo executivo", styles["Section"]),
             self._pdf_df_table(exec_df, ["Indicador", "Valor"], max_rows=None, widths=[90, 180]),
             Spacer(1, 5*mm),
-            Paragraph("Resumo por viga", styles["BodyCourier"]),
+            Paragraph("Solução comum por viga - caso representativo", styles["BodyCourier"]),
             self._pdf_df_table(summary_pdf, ["viga", "story", "case", "section_type", "m_pos_ed_kNm", "m_neg_ed_kNm", "v_ed_kN", "t_ed_kNm", "bot_rebar", "top_rebar", "skin_rebar", "solution", "status"], max_rows=None),
         ])
 
@@ -1612,7 +1614,8 @@ def _write_pdf_full_reports(self, path: str):
             ])
 
     elif scope == "Memória de cálculo":
-        mem = _calc_memory_df_labels(summary)
+        from .advanced import _calc_memory_df_advanced
+        mem = _calc_memory_df_advanced(results)
         story.extend([
             Paragraph("Memória de cálculo", styles["Section"]),
             self._pdf_df_table(mem, ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"], max_rows=None),
@@ -1630,6 +1633,8 @@ def _write_pdf_full_reports(self, path: str):
         canvas.drawRightString(285*mm, 7*mm, f"Página {doc_obj.page}")
         canvas.restoreState()
 
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_full_reports

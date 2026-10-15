@@ -390,14 +390,14 @@ def _torsion_requirements_profile_geometry(self, TEd_kNm, section, fck, fcd, fyd
 BeamDesigner.torsion_requirements = _torsion_requirements_profile_geometry
 
 
-def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str, phi_st=8.0) -> RebarChoice:
+def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str, phi_st=8.0, perimeter=False) -> RebarChoice:
     req = max(float(As_req or 0.0),0.0)
     candidates = []
     diameter_sets = [[12.0,16.0,20.0],[25.0]]
     for diameters in diameter_sets:
         for phi in diameters:
             aphi = bar_area_mm2(phi)
-            n0 = max(2,int(math.ceil(req/max(aphi,1e-9))))
+            n0 = max(2,int(math.ceil(req/max(aphi,1e-9)-1e-9)))
             for n in range(n0,min(n0+10,24)):
                 area=n*aphi
                 for layers in [1,2]:
@@ -422,6 +422,8 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
                             clear=avail-phi
                         else:
                             clear=(avail-count*phi)/(count-1)
+                        if perimeter and i==0 and clear+phi > 350.0+1e-9:
+                            ok=False; break
                         if clear+1e-9<req_clear:
                             ok=False; break
                         layer_depths.append(depth); clears.append(clear); widths.append(width)
@@ -502,21 +504,22 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     tors=self.torsion_requirements(TEd,section,fck,cp["fcd"],fyd)
     torsion_active=str(tors.get("torsion_considered","Não"))=="Sim"
     Asl_t=float(tors.get("Asl_torsion_req_mm2") or 0.0)
-    if torsion_active and h>=SKIN_REINF_MIN_HEIGHT_MM:
-        Atop=Abot=0.25*Asl_t; As_skin_req=0.25*Asl_t
-        As_skin_req=max(As_skin_req,0.001*bw*max(h-SKIN_REINF_MIN_HEIGHT_MM,0.0)/2.0)
-        skin_note="Aplicável: h >= 40 cm"
-    elif torsion_active:
-        Atop=Abot=0.50*Asl_t; As_skin_req=0.0; skin_note="Não aplicável: h < 40 cm"
+    if torsion_active:
+        # Reserve full edge shares; corner bars are not counted a second time
+        # as side reinforcement. These areas cannot also resist flexure.
+        Atop=Abot=Asl_t*bw/(2.0*(bw+h))
+        As_skin_req=Asl_t*h/(2.0*(bw+h))
+        skin_note="Armadura longitudinal de torção distribuída por quatro faces"
     elif h>SKIN_REINF_MIN_HEIGHT_MM:
         Atop=Abot=0.0; As_skin_req=0.001*bw*(h-SKIN_REINF_MIN_HEIGHT_MM)/2.0
         skin_note="Armadura de pele mínima para h > 40 cm"
     else:
         Atop=Abot=As_skin_req=0.0; skin_note="Não aplicável"
+    As_skin_req=max(As_skin_req,finite(row.get('_floor_skin'),0))
     skin_choice=_choose_skin_rebar_detailing(As_skin_req)
     from .reinforcement import solve_reinforcement
     cage = solve_reinforcement(self, section, cp, fyd, Mpos, Mneg, VEd, tors,
-                               _choose_face_rebar_geometry, Abot, Atop)
+                               _choose_face_rebar_geometry, Abot, Atop, floors=row)
     bot, top = cage['bot'], cage['top']
     d_bot, d_top = cage['d_bot'], cage['d_top']
     d2_bot, d2_top = cage['d2_bot'], cage['d2_top']
@@ -527,9 +530,23 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     shear, stir, Asw_total = cage['shear'], cage['stir'], cage['Asw_total']
     eta_pos=Mpos/max(finite(Mrd_pos.get('MRd_kNm')),1e-9) if Mpos>0 else 0.0
     eta_neg=Mneg/max(finite(Mrd_neg.get('MRd_kNm')),1e-9) if Mneg>0 else 0.0
+    closed_cage=torsion_active or bool(row.get('_force_closed',False))
+    side_pitch=None
+    if closed_cage:
+        side_span=max(0,h-2*(self.cover_mm+float(stir['phi_st_mm']))-max(bot.phi_mm,top.phi_mm))
+        min_side_bars=max(1,int(math.ceil(side_span/350.0))-1)
+        skin_choice=_choose_skin_rebar_detailing(As_skin_req,min_bars=min_side_bars)
+        side_pitch=side_span/(int(skin_choice['skin_n_per_face'])+1)
     els=self.serviceability(row,bot.area_mm2,top.area_mm2,d_bot,d_top,section,cp)
     det=_detailing_profile_geometry(self,section,bot,top,stir)
     failures=[]
+    if closed_cage and side_pitch is not None:
+        phi_side=float(skin_choice['skin_phi_mm'])
+        free_side=side_pitch-(max(bot.phi_mm,top.phi_mm)+phi_side)/2.0
+        if side_pitch>350+1e-9 or free_side<self.min_clear_spacing(max(phi_side,bot.phi_mm,top.phi_mm))-1e-9:
+            failures.append("espaçamento dos varões laterais de torção não conforme")
+    if float(skin_choice.get('skin_area_prov_face_mm2',0))+1e-8<As_skin_req:
+        failures.append("armadura lateral insuficiente")
     if not cage["reinforcement_converged"]:
         failures.append("dimensionamento iterativo da armadura não convergiu para uma solução admissível")
     eta_vt = (abs(VEd) / max(finite(shear.get("VRd_max_kN")), 1e-9)
@@ -550,7 +567,7 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     if failures:
         low=reason.lower()
         ftype="flexao" if "flexão" in low else ("esforco_transverso" if "transverso" in low else ("torcao" if "torção" in low else ("pormenorizacao" if "pormenoriz" in low or "cabe" in low else "dados")))
-    stir_label="Estribos fechados" if torsion_active else "Estribos"
+    stir_label="Estribos fechados" if closed_cage else "Estribos"
     sol=f"Inf.: {bot.label}; Sup.: {top.label}; {stir_label} Ø{int(stir['phi_st_mm'])}/{int(stir['stirrup_legs'])}r // {float(stir['s_st_mm'])/10:.1f} cm"
     if As_skin_req>1e-6: sol+=f"; pele/alma: {skin_choice['skin_rebar']}"
     Acalc,zbar,Iycalc,Izcalc=section.gross_properties()
@@ -599,6 +616,10 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     out["reinforcement_iterations"] = cage["reinforcement_iterations"]
     out["reinforcement_converged"] = cage["reinforcement_converged"]
     out["reinforcement_stirrup_assumed_mm"] = cage["reinforcement_stirrup_assumed_mm"]
+    out["torsion_reserved_bot_mm2"]=Abot
+    out["torsion_reserved_top_mm2"]=Atop
+    out["torsion_side_pitch_mm"]=side_pitch
+    out["closed_cage"]=closed_cage
     out["eta_vt"] = eta_vt
     out["eta_global"] = max(out["eta_global"], eta_vt)
     out["torsion_relevance_limit"] = 0.0
@@ -617,7 +638,7 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     if section.confidence == "Baixa" and any(finite(row.get(c)) > 0 for c in ("ax", "iy", "iz")):
         reviews.append("propriedades importadas incompatíveis com a geometria rectangular assumida")
     if torsion_active:
-        reviews.append("confirmar distribuição da armadura longitudinal de torção e sua sobreposição com flexão")
+        reviews.append("confirmar fecho e amarração dos estribos de torção e disposição dos varões nos desenhos")
     if reviews:
         if out["status"] == "OK":
             out["status"] = "Verificar"
@@ -855,7 +876,7 @@ def _write_pdf_geometry(self, path: str):
     doc.title=APP_NAME; doc.author=""; doc.subject=APP_SUBJECT
     story=[_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy()
     if geom is not None and not geom.empty:
@@ -875,6 +896,8 @@ def _write_pdf_geometry(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_geometry

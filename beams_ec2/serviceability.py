@@ -53,7 +53,9 @@ def _ec2_creep_coefficient_serviceability(fcm: float, rh_pct: float, h0_mm: floa
     rh = min(max(float(rh_pct), 40.0), 100.0)
     h0 = max(float(h0_mm), 20.0)
     t0 = max(float(t0_days), 0.5)
-    t = max(float(t_days), t0 + 1e-6)
+    t = max(float(t_days), 0.0)
+    if t <= float(t0_days):
+        return 0.0
     cement = _cement_class_serviceability(cement_class)
     alpha_cement = {"S": -1.0, "N": 0.0, "R": 1.0}[cement]
     t0_adj = t0 * (9.0 / (2.0 + t0 ** 1.2) + 1.0) ** alpha_cement
@@ -904,7 +906,7 @@ def _write_pdf_serviceability(self, path: str):
     doc.title=APP_NAME; doc.author=""; doc.subject=APP_SUBJECT
     story=[_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom
     env=self.df_env.copy() if self.df_env is not None else pd.DataFrame(); env=env.assign(viga=env.apply(_beam_label_labels,axis=1)) if not env.empty else env
@@ -921,6 +923,8 @@ def _write_pdf_serviceability(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_serviceability

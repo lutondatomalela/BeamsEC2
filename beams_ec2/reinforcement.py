@@ -14,16 +14,18 @@ def mean_tension_width(section):
 
 
 def solve_reinforcement(designer, section, cp, fyd, mpos, mneg, ved, tors,
-                        choose_face, extra_bot=0.0, extra_top=0.0):
+                        choose_face, extra_bot=0.0, extra_top=0.0, floors=None):
     h, bw = section.h_mm, section.web_mm
-    active = tors.get('torsion_considered') == 'Sim'
+    floors = {} if floors is None else floors
+    active = tors.get('torsion_considered') == 'Sim' or bool(floors.get('_force_closed',False))
     alternatives = []
     for phi_st in (8.0, 10.0, 6.0):
         depth = h - designer.cover_mm - phi_st - 8.0
         edge = designer.cover_mm + phi_st + 8.0
         if not 0 < edge < depth:
             continue
-        target_bot = target_top = 0.0
+        target_bot = float(floors.get('_floor_bot',0))
+        target_top = float(floors.get('_floor_top',0))
         last = None
         for iteration in range(1, 25):
             db, dt, d2b, d2t = (depth, depth, edge, edge) if last is None else (
@@ -36,8 +38,8 @@ def solve_reinforcement(designer, section, cp, fyd, mpos, mneg, ved, tors,
                              max(fpos['As_req'], fneg.get('As_comp_req', 0)) + extra_bot)
             target_top = max(target_top, min_top,
                              max(fneg['As_req'], fpos.get('As_comp_req', 0)) + extra_top)
-            bot = choose_face(designer, target_bot, section, 'bottom', phi_st)
-            top = choose_face(designer, target_top, section, 'top', phi_st)
+            bot = choose_face(designer, target_bot, section, 'bottom', phi_st, perimeter=active)
+            top = choose_face(designer, target_top, section, 'top', phi_st, perimeter=active)
             db = h - bot.centroid_from_edge_mm if bot.n_bars else depth
             dt = h - top.centroid_from_edge_mm if top.n_bars else depth
             d2b = bot.centroid_from_edge_mm if bot.n_bars else edge
@@ -47,10 +49,11 @@ def solve_reinforcement(designer, section, cp, fyd, mpos, mneg, ved, tors,
             layout_valid = gap >= designer.min_clear_spacing(max(bot.phi_mm,top.phi_mm))-1e-9
             layout_valid &= max(bot.area_mm2,top.area_mm2) <= 0.04*section.gross_properties()[0]+1e-8
             zero = {'MRd_kNm': 0.0, 'x_mm': None, 'z_mm': None}
-            mrp = designer.flexural_capacity(bot.area_mm2, top.area_mm2, section, db, d2t, cp['fcd'], fyd) if positions_valid else zero
-            mrn = designer.flexural_capacity(top.area_mm2, bot.area_mm2, section.flipped(), dt, d2b, cp['fcd'], fyd) if positions_valid else zero
+            mrp = designer.flexural_capacity(max(0,bot.area_mm2-extra_bot), max(0,top.area_mm2-extra_top), section, db, d2t, cp['fcd'], fyd) if positions_valid else zero
+            mrn = designer.flexural_capacity(max(0,top.area_mm2-extra_top), max(0,bot.area_mm2-extra_bot), section.flipped(), dt, d2b, cp['fcd'], fyd) if positions_valid else zero
             shear = designer.shear_requirements(ved, bw, min(db, dt), min(bot.area_mm2, top.area_mm2), cp['fck'], cp['fcd'], fyd)
             asw = max(shear['Asw_s_min_mm2_per_mm'], shear['Asw_s_shear_req_mm2_per_mm']) + (tors.get('Asw_s_torsion_req_mm2_per_mm') or 0.0)
+            asw=max(asw,float(floors.get('_floor_asw',0)))
             stir = designer.choose_stirrups(asw, bw, h, min(db, dt), active, phi_st_mm=phi_st)
             cap_ok = mrp['MRd_kNm'] + 1e-7 >= mpos and mrn['MRd_kNm'] + 1e-7 >= mneg
             # Repeat at the adopted positions before accepting any design.

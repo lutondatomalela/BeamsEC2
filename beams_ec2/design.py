@@ -307,13 +307,15 @@ BeamsEC2App._write_excel = _write_excel_report_base
 
 
 def _pdf_styles_report_base():
+    from .pdf_layout import ensure_fonts
+    ensure_fonts()
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], alignment=TA_CENTER, fontName="Courier-Bold", fontSize=14, leading=21, spaceAfter=10))
     styles.add(ParagraphStyle(name="ReportSubtitle", parent=styles["Normal"], alignment=TA_CENTER, fontName="Courier", fontSize=10, leading=15, textColor=colors.darkgrey, spaceAfter=8))
-    styles.add(ParagraphStyle(name="BodyCourier", parent=styles["Normal"], fontName="Courier", fontSize=9, leading=13.5, spaceAfter=6))
+    styles.add(ParagraphStyle(name="BodyCourier", parent=styles["Normal"], fontName="Courier", fontSize=9, leading=13.5, spaceAfter=6, keepWithNext=1))
     styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontName="Courier", fontSize=7.2, leading=10.8))
     styles.add(ParagraphStyle(name="Cell", parent=styles["Normal"], fontName="Courier", fontSize=6.5, leading=9.75, alignment=TA_LEFT))
     styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], fontName="Courier-Bold", fontSize=11, leading=16.5, spaceBefore=10, spaceAfter=16, textColor=colors.HexColor("#1F4E5F")))
@@ -1173,13 +1175,13 @@ def _choose_stirrups_detailing(self, Asw_s_total: float, b: float, h: float, d: 
 BeamDesigner.choose_stirrups = _choose_stirrups_detailing
 
 
-def _choose_skin_rebar_detailing(As_req_face_mm2: float) -> Dict[str, float | str]:
+def _choose_skin_rebar_detailing(As_req_face_mm2: float, min_bars=0) -> Dict[str, float | str]:
     req = max(0.0, float(As_req_face_mm2 or 0.0))
-    if req <= 1e-9:
+    if req <= 1e-9 and min_bars==0:
         return {"skin_rebar": "n/a", "skin_n_per_face": 0, "skin_phi_mm": 0.0, "skin_area_prov_face_mm2": 0.0}
     best = None
     for phi in SKIN_DIAMS_Detailing:
-        for n in range(1, 5):
+        for n in range(max(1,min_bars), max(5,min_bars+1)):
             area = n * bar_area_mm2(phi)
             if area + 1e-9 >= req:
                 score = (n, area, phi)
@@ -1189,7 +1191,7 @@ def _choose_skin_rebar_detailing(As_req_face_mm2: float) -> Dict[str, float | st
                 break
     if best is None:
         phi = SKIN_DIAMS_Detailing[-1]
-        n = int(math.ceil(req / bar_area_mm2(phi)))
+        n = max(min_bars,int(math.ceil(req / bar_area_mm2(phi))))
         area = n * bar_area_mm2(phi)
         return {"skin_rebar": f"{n}Ø{int(phi)}/face", "skin_n_per_face": n, "skin_phi_mm": phi, "skin_area_prov_face_mm2": area}
     return best[1]

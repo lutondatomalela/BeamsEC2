@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.2.0-rc2"
+APP_VERSION = "v0.2.0-rc3"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -214,12 +214,15 @@ def _prepare_input_frames(df: pd.DataFrame, moment_axis="my", shear_axis="fz", t
 
 def _load_df_clean(self, df: pd.DataFrame, source: str = ""):
     """Carrega a tabela usando os módulos finais, sem regressar às rotinas base."""
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de substituir a tabela.")
     clean, envelopes = _prepare_input_frames(
         df,
         moment_axis=self.var_moment_axis.get().lower(),
         shear_axis=self.var_shear_axis.get().lower(),
         torsion_axis=self.var_torsion_axis.get().lower(),
     )
+    self._calculation_parameters=None
     self.df_raw = df.copy()
     self.df_clean, self.df_env = clean, envelopes
     self.df_calc_input = pd.DataFrame()

@@ -2,7 +2,7 @@
 
 Aplicação desktop para o dimensionamento e a verificação de vigas de betão armado segundo a **NP EN 1992-1-1**.
 
-O código-fonte nesta branch corresponde à **v0.2.0-rc2**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
+O código-fonte nesta branch corresponde à **v0.2.0-rc3**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
 
 ## Instalação para utilizadores
 
@@ -113,6 +113,7 @@ python BeamsEC2.py
 ## Testes
 
 ```bash
+python -m pip install -r requirements-test.txt
 python selftest.py
 python -m unittest discover -s tests -v
 ```
@@ -123,7 +124,7 @@ Os testes incluem verificações de cálculo, importação UTF-16, preservação
 
 O workflow `.github/workflows/validation.yml` executa os testes em Windows e Linux, com Python 3.10 e 3.12. O ensaio de integração Windows testa a janela Tk, o cálculo ELU/ELS e os relatórios. Esta versão candidata ainda não inclui um novo executável Windows. Consulte os [casos analíticos de validação](docs/VALIDATION_CASES.md).
 
-As estações são expressas em metros. Os diagramas ELS devem cobrir 0 a L; diagramas parciais não são reescalados. Todas as combinações ELU são conservadas para as verificações acopladas.
+As estações são expressas em metros. Os diagramas ELS devem cobrir 0 a L; diagramas parciais não são reescalados. Todas as combinações ELU são conservadas para as verificações acopladas. O programa adota uma armadura comum por membro e volta a verificar cada combinação; se a solução comum não convergir, o resultado é Falha. Os dados e os parâmetros são fixados durante cada cálculo.
 
 ## Estrutura do projecto
 

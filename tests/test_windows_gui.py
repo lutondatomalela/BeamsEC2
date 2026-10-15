@@ -36,6 +36,8 @@ class WindowsGUIIntegrationTests(unittest.TestCase):
             try:
                 app.load_df(pd.DataFrame(rows),'CI integration')
                 app.run_design()
+                app.run_design()  # A second click must not start a second worker.
+                app.var_cover.set('99')  # The running calculation keeps its snapshot.
                 app.after(50,poll)
             except Exception as exc:
                 error(exc)
@@ -56,6 +58,12 @@ class WindowsGUIIntegrationTests(unittest.TestCase):
                 self.assertFalse(failures, failures)
                 self.assertTrue(completed,'Calculation did not complete')
                 self.assertEqual(len(app.df_results),1)
+                self.assertEqual(app.df_results.iloc[0]['cover_mm'],35)
+                self.assertFalse(app._calculation_running)
+                self.assertIn('df_sls_points',vars(app))
+                parameters=app._parameters_df()
+                cover=parameters[parameters.iloc[:,0].astype(str).str.contains('Recobrimento')].iloc[0,1]
+                self.assertEqual(float(cover),35)
                 self.assertIn('service_wk_est_mm',app.df_results)
                 self.assertEqual(app.df_results.iloc[0]['service_combinations_checked'],1)
                 with tempfile.TemporaryDirectory() as folder:

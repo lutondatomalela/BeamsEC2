@@ -395,6 +395,8 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     elif axial_ratio > 0.10:
         status = "Dados insuficientes"
         note = "Esforço axial de serviço relevante; é necessária verificação N-M dedicada."
+    if history['mode']=='duas fases G+Q':
+        note += " Fluência por coeficiente ponderado; não é uma análise incremental com redistribuição."
     # No encastre-encastre, resíduos elevados indicam que o diagrama importado e as
     # condições cinemáticas seleccionadas não são compatíveis.
     residual = residual_final if params.long_term else residual_short
@@ -949,6 +951,8 @@ BeamsEC2App.validate_inputs = _validate_inputs_advanced
 _run_design_serviceability_base = BeamsEC2App.run_design
 
 def _run_design_advanced(self):
+    if getattr(self,"_calculation_running",False):
+        return
     _ensure_sls_vars_advanced(self)
     self.var_agg.set(f"{DEFAULT_AGGREGATE_MM_Reporting:.0f}")
     self.var_gamma_c.set(f"{DEFAULT_GAMMA_C_Reporting:.2f}")
@@ -966,6 +970,9 @@ def _run_design_advanced(self):
     if elu_env.empty:
         messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
         return
+    from .calculation import snapshot_inputs
+    snapshot=snapshot_inputs(self)
+    self._calculation_running=True
     input_df = elu_env  # Every combination is required for coupled checks.
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
     def progress(done, total):
@@ -976,13 +983,13 @@ def _run_design_advanced(self):
         try:
             results = designer.design_dataframe(input_df, progress_callback=progress)
             self.after(0, lambda: self.status_var.set("A calcular envelope ELS..."))
-            results = _apply_serviceability_advanced(self, results)
-            self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(self, results)
+            results = _apply_serviceability_advanced(snapshot, results)
+            self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(snapshot, results)
             self.df_internal_tests = _internal_tests_advanced()
-            summary = build_summary_by_member(results) if self.var_summary.get() else pd.DataFrame()
+            summary = build_summary_by_member(results) if snapshot.var_summary.get() else pd.DataFrame()
             failures = results[results["status"] == "Falha"].copy() if "status" in results.columns else pd.DataFrame()
             ok = results[results["status"] == "OK"].copy() if "status" in results.columns else pd.DataFrame()
-            validation = build_data_validation(self.df_clean, self.df_env, results)
+            validation = build_data_validation(snapshot.df_clean, snapshot.df_env, results)
             if self.df_internal_tests is not None and not self.df_internal_tests.empty:
                 internal = self.df_internal_tests.copy()
                 internal.insert(0, "Origem", "Teste interno")
@@ -990,6 +997,11 @@ def _run_design_advanced(self):
                 internal = internal.rename(columns={"Teste": "Verificação", "Estado": "Resultado"})
                 validation = pd.concat([validation, internal], ignore_index=True, sort=False)
             def finish():
+                self._calculation_running=False
+                self.df_sls_points=snapshot.df_sls_points
+                self.df_sls_combinations=snapshot.df_sls_combinations
+                self.df_sls_parameters=snapshot.df_sls_parameters
+                self._calculation_parameters=BeamsEC2App._parameters_df(snapshot)
                 self.df_results=results; self.df_summary=summary; self.df_failures=failures; self.df_ok=ok
                 self.df_validation=validation; self.df_notes=build_normative_notes(); self.df_filtered=pd.DataFrame()
                 self.show_df(self.tree_results,self.df_results); self.show_df(self.tree_summary,self.df_summary)
@@ -1001,7 +1013,13 @@ def _run_design_advanced(self):
                 self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; testes internos com {n_tests_fail} falhas.")
             self.after(0, finish)
         except Exception as exc:
-            msg=str(exc); self.after(0,lambda m=msg:messagebox.showerror("Erro",m)); self.after(0,lambda:self.status_var.set("Falha na análise.")); self.after(0,lambda:self.progress_var.set(0.0))
+            msg=str(exc)
+            def fail(message=msg):
+                self._calculation_running=False
+                self.status_var.set("Falha na análise.")
+                self.progress_var.set(0.0)
+                messagebox.showerror("Erro",message)
+            self.after(0,fail)
     threading.Thread(target=worker,daemon=True).start()
 
 BeamsEC2App.run_design = _run_design_advanced
@@ -1011,6 +1029,9 @@ BeamsEC2App.run_design = _run_design_advanced
 _parameters_df_advanced_base = BeamsEC2App._parameters_df
 
 def _parameters_df_advanced(self):
+    cached=getattr(self,"_calculation_parameters",None)
+    if cached is not None:
+        return cached.copy()
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
     extra = pd.DataFrame([
@@ -1028,6 +1049,8 @@ BeamsEC2App._parameters_df = _parameters_df_advanced
 _write_excel_advanced_base = BeamsEC2App._write_excel
 
 def _write_excel_advanced(self, path: str):
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de exportar.")
     _write_excel_advanced_base(self, path)
     try:
         from openpyxl import load_workbook
@@ -1074,6 +1097,8 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         for _, r in results.iterrows():
             common = {"Viga": _beam_label_labels(r), "Caso": r.get("case", ""), "Piso": r.get("story", ""), "Secção": r.get("section_geometry_summary", r.get("section_type", ""))}
             rows.extend([
+                {**common, "Etapa": "Armaduras", "Item": "Combinações da armadura comum", "Valor": r.get('adopted_for_cases',''), "Unidade": "-", "Critério/Referência": "Todas as combinações do membro", "Estado/Nota": r.get('shared_cage_converged','')},
+                {**common, "Etapa": "Torção", "Item": "As reservada inferior / superior", "Valor": f"{r.get('torsion_reserved_bot_mm2',0):.2f} / {r.get('torsion_reserved_top_mm2',0):.2f}", "Unidade": "mm²", "Critério/Referência": "EC2 6.3.2; não reutilizada em flexão", "Estado/Nota": f"Passo dos varões laterais: {r.get('torsion_side_pitch_mm','-')} mm"},
                 {**common, "Etapa": "Armaduras", "Item": "Convergência / iterações", "Valor": f"{r.get('reinforcement_converged','')} / {r.get('reinforcement_iterations','')}", "Unidade": "-", "Critério/Referência": "Resistência com posições reais", "Estado/Nota": f"Estribo {r.get('phi_st_mm','')} mm; d inferior {r.get('d_bot_mm','')} mm; d superior {r.get('d_top_mm','')} mm"},
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},
@@ -1170,6 +1195,8 @@ BeamsEC2App.update_report = _update_report_advanced
 _write_pdf_advanced_base = BeamsEC2App._write_pdf
 
 def _write_pdf_advanced(self, path: str):
+    if getattr(self,"_calculation_running",False):
+        raise RuntimeError("Aguarde a conclusão do cálculo antes de exportar.")
     if not hasattr(self, "var_pdf_scope") or self.var_pdf_scope.get() != "Relatório técnico":
         return _write_pdf_advanced_base(self, path)
     from reportlab.lib import colors
@@ -1184,7 +1211,7 @@ def _write_pdf_advanced(self, path: str):
     doc.title = APP_NAME; doc.author = ""; doc.subject = APP_SUBJECT
     story = [_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falha/Verificar",f"{n_ok}/{n_fail}/{int((results['status']=='Verificar').sum())}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False))
     story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom
@@ -1196,8 +1223,8 @@ def _write_pdf_advanced(self, path: str):
         Paragraph("Geometria identificada",styles["BodyCourier"]),self._pdf_df_table(geom,["viga","story","section_type","section_geometry_summary","section_geometry_source","section_geometry_confidence","section_fit_error_pct"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Critérios de cálculo",styles["BodyCourier"]),self._pdf_df_table(self._parameters_df(),["Parâmetro","Valor"],max_rows=None,widths=[90,180]),Spacer(1,5*mm),
         Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(summary),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(summary),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","eta_vt","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(results),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(results),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","eta_vt","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_status"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Testes internos",styles["BodyCourier"]),self._pdf_df_table(tests,["Teste","Calculado","Referência","Erro relativo","Tolerância","Estado"],max_rows=None),
@@ -1208,6 +1235,8 @@ def _write_pdf_advanced(self, path: str):
     def footer(canvas,doc_obj):
         canvas.saveState(); canvas.setTitle(APP_NAME); canvas.setAuthor(""); canvas.setSubject(APP_SUBJECT); canvas.setFont("Courier",7); canvas.setFillColor(colors.grey)
         canvas.drawString(12*mm,7*mm,f"{APP_NAME} | {footer_date}"); canvas.drawRightString(285*mm,7*mm,f"Página {doc_obj.page}"); canvas.restoreState()
+    from .pdf_layout import flatten_tables
+    story=flatten_tables(story)
     doc.build(story,onFirstPage=footer,onLaterPages=footer)
 
 BeamsEC2App._write_pdf = _write_pdf_advanced

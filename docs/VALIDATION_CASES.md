@@ -41,3 +41,14 @@ Os testes cobrem flexão positiva/negativa com armadura dupla, simetria da solu�
 ## Interface Windows
 
 O teste opcional `test_windows_gui.py` abre a aplicação Tk, importa duas combinações com cinco estações cada, executa o cálculo assíncrono ELU/ELS e exporta XLSX e os três tipos de PDF. Requer `BEAMSEC2_GUI_TESTS=1` em Windows e corre num passo próprio do CI. Verifica funcionamento e geração de ficheiros; não substitui inspeção visual dos relatórios e da interface.
+
+
+## Armadura comum e torção
+
+Os testes verificam que combinações com momentos de sinais opostos usam exatamente os mesmos varões, estribos e armadura lateral. Uma combinação com torção impõe estribos fechados à solução comum, mesmo nas restantes combinações sem torção. A resistência à flexão é conferida com As,adotada menos a reserva de torção de cada face; a soma das quatro reservas recupera a necessidade longitudinal total do modelo.
+
+## Efeitos diferidos e relatórios
+
+Acrescentados testes das equações do Anexo B para as classes de cimento S/N/R e diferentes resistências, da composição ponderada G+Q, da retração de secagem e autogénea e da curvatura de retração com integração até à flecha. O coeficiente de fluência é exatamente zero antes e no instante da carga.
+
+A verificação de PDF inclui os três tipos de relatório, texto extraído de todas as páginas e preservação da última linha de uma tabela larga com 80 linhas. As páginas de um caso sintético com duas vigas foram renderizadas e inspecionadas. A memória inclui todas as combinações, a reserva de torção e a convergência da armadura comum. `python tools/preview_reports.py` reproduz estes PDFs em `out/pdf_qa`.
