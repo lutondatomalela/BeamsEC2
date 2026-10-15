@@ -436,9 +436,11 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     status = "OK" if all(v == "OK" for v in checks) else "Não verifica"
     note = "Cálculo por curvaturas com envelope ELS, condição de apoio e efeitos diferidos."
     if quality == "Insuficiente":
+        defl_status = "Dados insuficientes"
         status = "Dados insuficientes"
         note = "Flecha não validada: importar pelo menos 3 estações nesta combinação ELS."
-    elif axial_ratio > 0.10:
+    if axial_ratio > 0.10:
+        crack_status = steel_status = concrete_status = defl_status = "Dados insuficientes"
         status = "Dados insuficientes"
         note = "Esforço axial de serviço relevante; é necessária verificação N-M dedicada."
     if history['mode']=='duas fases G+Q':
@@ -449,6 +451,7 @@ def _calculate_member_sls_advanced(app, r: pd.Series, group: pd.DataFrame, case_
     residual_limit = max(0.25, L_m * 1000.0 / 20000.0)
     if support == "Encastre-encastre" and residual["disp_residual_mm"] > residual_limit and status == "OK":
         status = "Dados insuficientes"
+        defl_status = "Dados insuficientes"
         note = "Diagrama de curvaturas incompatível com encastre-encastre; rever apoios/estações."
     return {
         "service_combination": case_label,

@@ -45,3 +45,13 @@ class OptionalDiagramTests(unittest.TestCase):
                     service_deflection_status="Dados insuficientes")
         self.assertEqual(apply_check_policy(source,"ELS_CAR")["service_status"],"OK")
         self.assertEqual(apply_check_policy(source,"ELS_QP")["service_status"],"Dados insuficientes")
+
+    def test_two_positions_do_not_validate_deflection_or_axial_checks(self):
+        from beams_ec2.combinations import apply_check_policy
+        app=harness();r=app.df_results.iloc[0]
+        g=app.df_clean[(app.df_clean.member=='1') & (app.df_clean['case']=='201 ELS QP')].iloc[[0,-1]].copy()
+        raw,_=advanced._calculate_member_sls_advanced(app,r,g,'201','test',advanced.SLSParametersAdvanced())
+        self.assertEqual(apply_check_policy(raw,'ELS_QP')['service_status'],'Dados insuficientes')
+        g=app.df_clean[(app.df_clean.member=='1') & (app.df_clean['case']=='201 ELS QP')].assign(fx=10000)
+        raw,_=advanced._calculate_member_sls_advanced(app,r,g,'201','test',advanced.SLSParametersAdvanced())
+        self.assertEqual(apply_check_policy(raw,'ELS_CAR')['service_status'],'Dados insuficientes')
