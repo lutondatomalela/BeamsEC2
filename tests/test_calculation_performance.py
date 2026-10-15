@@ -33,3 +33,13 @@ class CalculationReuseTests(unittest.TestCase):
         pd.testing.assert_frame_equal(profile,profile2)
         self.assertEqual(len(detail2),1)
         self.assertEqual(len(profile2),101)
+
+    def test_detailing_keeps_distinct_shear_angles(self):
+        app=harness()
+        row=app.df_results.iloc[[0]].copy()
+        repeated=pd.concat([row,row],ignore_index=True)
+        repeated.loc[0,'cot_theta_shear']=1.0
+        repeated.loc[1,'cot_theta_shear']=2.0
+        detail,_=advanced._longitudinal_detailing_advanced(app,repeated)
+        self.assertEqual(len(detail),2)
+        self.assertEqual(detail.shift_al_mm.iloc[1],2*detail.shift_al_mm.iloc[0])

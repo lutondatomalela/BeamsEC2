@@ -670,7 +670,7 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
     member_data = {str(member): group for member, group in raw.groupby('member', sort=False)} if not raw.empty else {}
     detailed = set()
     for _, r in results.iterrows():
-        key = tuple(str(r.get(c, '')) for c in ('member', 'name', 'story', 'bot_rebar', 'top_rebar', 'd_bot_mm', 'd_top_mm'))
+        key = (repr(_profile_from_result_serviceability(r)),) + tuple(str(r.get(c, '')) for c in ('member', 'name', 'story', 'bot_rebar', 'top_rebar', 'd_bot_mm', 'd_top_mm', 'd2_top_mm', 'fck_MPa', 'fyd_MPa', 'length_m', 'cot_theta_shear'))
         if key in detailed:
             continue
         detailed.add(key)
