@@ -1074,6 +1074,7 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         for _, r in results.iterrows():
             common = {"Viga": _beam_label_labels(r), "Caso": r.get("case", ""), "Piso": r.get("story", ""), "Secção": r.get("section_geometry_summary", r.get("section_type", ""))}
             rows.extend([
+                {**common, "Etapa": "Armaduras", "Item": "Convergência / iterações", "Valor": f"{r.get('reinforcement_converged','')} / {r.get('reinforcement_iterations','')}", "Unidade": "-", "Critério/Referência": "Resistência com posições reais", "Estado/Nota": f"Estribo {r.get('phi_st_mm','')} mm; d inferior {r.get('d_bot_mm','')} mm; d superior {r.get('d_top_mm','')} mm"},
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},
                 {**common, "Etapa": "Pormenorização", "Item": "Armadura ELS ao longo do vão", "Valor": r.get("service_reinforcement_model", ""), "Unidade": "-", "Critério/Referência": "Modelo de rigidez", "Estado/Nota": ""},

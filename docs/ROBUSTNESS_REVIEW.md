@@ -1,7 +1,7 @@
 # Avaliação de robustez do BeamsEC2
 
-Data: 14 de outubro de 2026. Base: `f883304d7a80e4f1425d6418546dd96429e8740a`.
-Estado: versão candidata de validação, `v0.2.0-rc1`.
+Data: 15 de outubro de 2026. Base: `f883304d7a80e4f1425d6418546dd96429e8740a`.
+Estado: versão candidata de validação, `v0.2.0-rc2`.
 
 ## Conclusão técnica
 
@@ -25,6 +25,8 @@ A versão de partida não deve ser considerada validada para utilização irrest
 | Resumo podia esconder Verificar ou misturar valores de combinações | Prioridade Falha, Verificar, OK; seleção de linha integral | Revisão preservada e valor ausente não preenchido por outro caso |
 | Exceções na adição de folhas XLSX ignoradas | Erro explícito na cadeia final de exportação | Exportação e reabertura com folhas obrigatórias |
 
+A seleção longitudinal repete a verificação nas posições reais, incluindo estribos de 6/8/10 mm e armadura dupla em qualquer sinal de momento. São verificados o espaço entre faces, os limites de área por face, a largura ao longo do diâmetro do varão e o espaçamento transversal entre ramos. O cálculo ELS desconta o betão substituído por aço na zona comprimida e utiliza a inércia não fissurada para a tensão no aço antes da fendilhação.
+
 A interação usa os máximos absolutos V e T do mesmo membro e combinação. Se ocorrerem em estações diferentes, esta verificação é conservadora e pode exigir análise localizada.
 
 ## Base normativa consultada
@@ -37,21 +39,22 @@ Os documentos normativos fornecidos pelo utilizador não são redistribuídos no
 
 ## Verificação executada
 
-- 28 testes automatizados de regressão adicionais, com subcasos de dados inválidos.
+- 45 testes de cálculo, importação e exportação, mais um ensaio de integração Tk exclusivo de Windows.
+- Referências analíticas de secções ELS, fissuração e integração documentadas em [VALIDATION_CASES.md](VALIDATION_CASES.md).
 - 10 verificações internas já existentes.
 - Exportação XLSX pela cadeia final da aplicação, reabertura e confirmação das folhas de resultados, corte/torção, geometria, ELS e pormenorização.
 - Compilação sintática dos módulos e controlo de espaços do diff.
 - CI preparado para Windows/Linux, Python 3.10 e 3.12; os resultados remotos devem ser consultados no pull request.
 
-Os testes locais foram executados em Linux/Python 3.12. Não foi realizado ensaio visual da interface Windows nem compilação de um novo executável.
+Os testes locais foram executados em Linux/Python 3.12. O teste Tk Windows é executado no CI. Não foi realizada inspeção visual da interface Windows nem compilação de um novo executável.
 
 ## Limites para aprovação em projeto
 
 1. Flexão composta N-M e flexão biaxial não estão implementadas. A seleção de eixos diferentes de MY/FZ exige confirmação da rotação da geometria; o programa não a valida automaticamente.
 2. Betões acima de C50/60 exigem os coeficientes lambda/eta e extensões próprios. O programa assinala Verificar; os números expedidos não devem ser aprovados sem cálculo dedicado.
-3. A posição da armadura longitudinal considera estribos de 8 mm. Quando a solução requer estribos maiores, o resultado exige revisão da altura útil e da disposição real.
+3. As posições são agora recalculadas com o diâmetro de estribo adotado e a disposição por camadas. A busca construtiva é limitada à gama de diâmetros e a duas camadas; Falha pode significar que não foi encontrada solução nessa gama.
 4. A sobreposição da armadura longitudinal de torção com flexão e a distribuição pelo perímetro exigem confirmação. Todos os casos com torção ativa ficam sujeitos a revisão, mesmo que as escoras verifiquem.
-5. O dimensionamento longitudinal inicial ainda é aproximado. A resistência da armadura adotada é recalculada; uma solução que falhe pode requerer aumento manual ou alteração da secção. Não existe uma otimização iterativa completa para todos os casos.
+5. O dimensionamento é iterativo, com resistência verificada nas duas direções e armadura comprimida considerada em ambas as faces. A busca não é uma otimização global de todas as disposições possíveis.
 6. O cálculo ELS mantém hipóteses de fluência, retração, condições de apoio e armadura local. A validação integral com exemplos independentes de vigas fissuradas contínuas, regime de combinações e flecha após construção permanece necessária.
 7. Amarrações, emendas, decalagem, armadura de pele, corte entre alma e banzos, aberturas e regiões D devem ser conferidos nos desenhos e com cálculos adequados.
 8. Os resumos apresentam um caso representativo prioritário; a aprovação deve consultar todas as combinações na folha de resultados completos.

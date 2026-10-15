@@ -390,9 +390,8 @@ def _torsion_requirements_profile_geometry(self, TEd_kNm, section, fck, fcd, fyd
 BeamDesigner.torsion_requirements = _torsion_requirements_profile_geometry
 
 
-def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str) -> RebarChoice:
+def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, face: str, phi_st=8.0) -> RebarChoice:
     req = max(float(As_req or 0.0),0.0)
-    phi_st = 8.0
     candidates = []
     diameter_sets = [[12.0,16.0,20.0],[25.0]]
     for diameters in diameter_sets:
@@ -414,7 +413,10 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
                         z=depth if face=="top" else section.h_mm-depth
                         if depth >= section.h_mm-self.cover_mm or z<0 or z>section.h_mm:
                             ok=False; break
-                        width=section.width_at_depth(z)
+                        # A bar must fit over its full diameter, including a
+                        # flange/web boundary, rather than only at its centre.
+                        width=min(b for z0,z1,b in section.segments
+                                  if z1 > z-phi/2.0 and z0 < z+phi/2.0)
                         avail=width-2.0*(self.cover_mm+phi_st)
                         if count==1:
                             clear=avail-phi
@@ -430,6 +432,7 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
                     # quando as gamas correntes não produzem solução.
                     score=(layers,n,area-req,phi)
                     reb=RebarChoice(n,phi,area,layers,max(counts),centroid,min(clears),"OK")
+                    reb.layer_depths_mm=layer_depths
                     reb.layer_counts=counts
                     reb.layer_widths_mm=widths
                     reb.layout="+".join(str(c) for c in counts)
@@ -446,6 +449,15 @@ def _choose_face_rebar_geometry(self, As_req, section: SectionProfileGeometry, f
 
 def _detailing_profile_geometry(self, section, bot, top, stir):
     issues=[]
+    if bot.n_bars and top.n_bars:
+        bottom_extent=max(getattr(bot,"layer_depths_mm",[bot.centroid_from_edge_mm]))+bot.phi_mm/2.0
+        top_extent=max(getattr(top,"layer_depths_mm",[top.centroid_from_edge_mm]))+top.phi_mm/2.0
+        gap=section.h_mm-bottom_extent-top_extent
+        if gap < self.min_clear_spacing(max(bot.phi_mm,top.phi_mm))-1e-9:
+            issues.append("espaçamento vertical insuficiente entre armaduras superior e inferior")
+    Ac=section.gross_properties()[0]
+    if max(bot.area_mm2,top.area_mm2)>0.04*Ac+1e-8:
+        issues.append("armadura de uma face excede 0,04 Ac fora de emendas (EC2 9.2.1.1)")
     for label,reb in [("inferior",bot),("superior",top)]:
         if reb.status!="OK": issues.append(f"armadura {label} não cabe na geometria real")
         if reb.n_bars and reb.n_bars<2: issues.append(f"armadura {label}: mínimo de 2 varões")
@@ -502,24 +514,24 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
     else:
         Atop=Abot=As_skin_req=0.0; skin_note="Não aplicável"
     skin_choice=_choose_skin_rebar_detailing(As_skin_req)
-    As_req_bot=max(As_min_bot,flex_pos["As_req"]+Abot)
-    As_req_top=max(As_min_top,flex_neg["As_req"]+flex_pos.get("As_comp_req",0.0)+Atop)
-    bot=_choose_face_rebar_geometry(self,As_req_bot,section,"bottom")
-    top=_choose_face_rebar_geometry(self,As_req_top,section,"top")
-    d_bot=h-bot.centroid_from_edge_mm if bot.n_bars else d0
-    d_top=h-top.centroid_from_edge_mm if top.n_bars else d0
-    d2_top=top.centroid_from_edge_mm if top.n_bars else d20
-    d2_bot=bot.centroid_from_edge_mm if bot.n_bars else d20
-    Mrd_pos=self.flexural_capacity(bot.area_mm2,top.area_mm2,section,d_bot,d2_top,cp["fcd"],fyd)
-    Mrd_neg=self.flexural_capacity(top.area_mm2,bot.area_mm2,section_neg,d_top,d2_bot,cp["fcd"],fyd)
-    eta_pos=Mpos/max(finite(Mrd_pos.get("MRd_kNm")),1e-9) if Mpos>0 else 0.0
-    eta_neg=Mneg/max(finite(Mrd_neg.get("MRd_kNm")),1e-9) if Mneg>0 else 0.0
-    shear=self.shear_requirements(VEd,bw,min(d_bot,d_top),min(bot.area_mm2,top.area_mm2),fck,cp["fcd"],fyd)
-    Asw_total=max(float(shear["Asw_s_min_mm2_per_mm"]),float(shear["Asw_s_shear_req_mm2_per_mm"]))+float(tors.get("Asw_s_torsion_req_mm2_per_mm") or 0.0)
-    stir=self.choose_stirrups(Asw_total,bw,h,min(d_bot,d_top),torsion=torsion_active)
+    from .reinforcement import solve_reinforcement
+    cage = solve_reinforcement(self, section, cp, fyd, Mpos, Mneg, VEd, tors,
+                               _choose_face_rebar_geometry, Abot, Atop)
+    bot, top = cage['bot'], cage['top']
+    d_bot, d_top = cage['d_bot'], cage['d_top']
+    d2_bot, d2_top = cage['d2_bot'], cage['d2_top']
+    Mrd_pos, Mrd_neg = cage['Mrd_pos'], cage['Mrd_neg']
+    flex_pos, flex_neg = cage['flex_pos'], cage['flex_neg']
+    As_min_bot, As_min_top = cage['As_min_bot'], cage['As_min_top']
+    As_req_bot, As_req_top = cage['As_req_bot'], cage['As_req_top']
+    shear, stir, Asw_total = cage['shear'], cage['stir'], cage['Asw_total']
+    eta_pos=Mpos/max(finite(Mrd_pos.get('MRd_kNm')),1e-9) if Mpos>0 else 0.0
+    eta_neg=Mneg/max(finite(Mrd_neg.get('MRd_kNm')),1e-9) if Mneg>0 else 0.0
     els=self.serviceability(row,bot.area_mm2,top.area_mm2,d_bot,d_top,section,cp)
     det=_detailing_profile_geometry(self,section,bot,top,stir)
     failures=[]
+    if not cage["reinforcement_converged"]:
+        failures.append("dimensionamento iterativo da armadura não convergiu para uma solução admissível")
     eta_vt = (abs(VEd) / max(finite(shear.get("VRd_max_kN")), 1e-9)
               + abs(TEd) / max(finite(tors.get("TRd_max_kNm")), 1e-9))
     if eta_vt > 1.0 + 1e-6:
@@ -584,6 +596,9 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
         "shortlist_text":f"Inf {bot.label} ({getattr(bot,'layout','')}); Sup {top.label} ({getattr(top,'layout','')}); geometria {section.geometry_summary}",
     }
     out["beam_ref"]=_beam_label_labels(out)
+    out["reinforcement_iterations"] = cage["reinforcement_iterations"]
+    out["reinforcement_converged"] = cage["reinforcement_converged"]
+    out["reinforcement_stirrup_assumed_mm"] = cage["reinforcement_stirrup_assumed_mm"]
     out["eta_vt"] = eta_vt
     out["eta_global"] = max(out["eta_global"], eta_vt)
     out["torsion_relevance_limit"] = 0.0
@@ -601,8 +616,6 @@ def _design_one_geometry(self, row: pd.Series) -> Dict:
         reviews.append("classe de betão em falta; confirmar C30/37 assumido")
     if section.confidence == "Baixa" and any(finite(row.get(c)) > 0 for c in ("ax", "iy", "iz")):
         reviews.append("propriedades importadas incompatíveis com a geometria rectangular assumida")
-    if finite(stir.get("phi_st_mm")) > 8:
-        reviews.append("recalcular posições dos varões com o diâmetro real do estribo")
     if torsion_active:
         reviews.append("confirmar distribuição da armadura longitudinal de torção e sua sobreposição com flexão")
     if reviews:

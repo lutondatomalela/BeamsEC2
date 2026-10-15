@@ -1,3 +1,14 @@
+# v0.2.0-rc2 - 2026-10-15
+
+- Seleção iterativa das armaduras com posições reais e estribos de 6/8/10 mm.
+- Armadura comprimida para os dois sinais do momento; rejeição explícita de não convergência.
+- Verificação de espaço entre faces, área máxima por face, transição banzo/alma e espaçamento transversal dos ramos.
+- Armadura mínima com largura média da zona tracionada nas secções T.
+- ELS: betão substituído por aço descontado na zona comprimida; tensão no aço não fissurado com a inércia correspondente.
+- Referências analíticas independentes para secção homogeneizada, fissuração, curvatura e flecha.
+- Ensaio de integração Windows com aplicação Tk real, cálculo ELU/ELS e exportações XLSX/PDF.
+- 45 testes gerais e um ensaio Windows, além das dez verificações internas existentes.
+
 # v0.2.0-rc1 - 2026-10-14
 
 - Resistência à flexão com compatibilidade de extensões e equilíbrio de forças.

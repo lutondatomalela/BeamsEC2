@@ -1278,7 +1278,7 @@ def _beamdesigner_init_stirrups(self, *args, **kwargs):
 BeamDesigner.__init__ = _beamdesigner_init_stirrups
 
 
-def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool) -> Dict[str, float | str]:
+def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: float, torsion: bool, phi_st_mm=None) -> Dict[str, float | str]:
     """Escolha construtiva dos estribos.
 
     Regras adoptadas:
@@ -1298,9 +1298,16 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
 
     candidates = []
     for legs in STIRRUP_LEGS_Detailing:
-        if legs < 2:
+        if legs < 2 or (torsion and legs != 2):
             continue
         for phi in STIRRUP_DIAMS_Detailing:
+            if phi_st_mm is not None and phi != phi_st_mm:
+                continue
+            transverse_spacing=(b-2*self.cover_mm-phi)/(legs-1)
+            if transverse_spacing > min(0.75*d,600.0)+1e-9:
+                continue
+            if transverse_spacing-phi < self.min_clear_spacing(phi)-1e-9:
+                continue
             area = legs * bar_area_mm2(phi)
             for s in sorted(allowed_s, reverse=True):
                 provided = area / s
@@ -1328,8 +1335,8 @@ def _choose_stirrups_stirrups(self, Asw_s_total: float, b: float, h: float, d: f
         return candidates[0][1]
 
     # Se não couber com a lista normalizada, adoptar a solução máxima no menor espaçamento da lista e assinalar.
-    phi = STIRRUP_DIAMS_Detailing[-1]
-    legs = STIRRUP_LEGS_Detailing[-1]
+    phi = phi_st_mm if phi_st_mm is not None else STIRRUP_DIAMS_Detailing[-1]
+    legs = 2 if torsion else STIRRUP_LEGS_Detailing[-1]
     s = min(allowed_s)
     area = legs * bar_area_mm2(phi)
     return {

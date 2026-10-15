@@ -175,10 +175,14 @@ def _uncracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t:
 
 
 def _cracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t: float, As_c: float, d_c: float, alpha_e: float) -> Dict[str, float]:
+    def steel_coefficients(x):
+        # Replace concrete displaced by steel in the compression zone.
+        return alpha_e-(1.0 if d_t<x else 0.0), alpha_e-(1.0 if d_c<x else 0.0)
     def f(x: float) -> float:
         Ac, Qc, _ = _profile_interval_props_serviceability(p, 0.0, x)
-        At = Ac + alpha_e * (As_t + As_c)
-        Qt = Qc + alpha_e * (As_t * d_t + As_c * d_c)
+        nt,nc=steel_coefficients(x)
+        At = Ac + nt*As_t + nc*As_c
+        Qt = Qc + nt*As_t*d_t + nc*As_c*d_c
         return Qt / max(At, 1e-9) - x
     lo = 0.1
     hi = min(max(d_t - 0.1, 0.2), p.h_mm - 0.1)
@@ -198,8 +202,9 @@ def _cracked_state_serviceability(p: SectionProfileGeometry, As_t: float, d_t: f
                 flo = fm
         x = 0.5 * (lo + hi)
     Ac, Qc, I0c = _profile_interval_props_serviceability(p, 0.0, x)
-    I0 = I0c + alpha_e * (As_t * d_t ** 2 + As_c * d_c ** 2)
-    At = Ac + alpha_e * (As_t + As_c)
+    nt,nc=steel_coefficients(x)
+    I0 = I0c + nt*As_t*d_t**2 + nc*As_c*d_c**2
+    At = Ac + nt*As_t + nc*As_c
     I = max(I0 - At * x ** 2, 1.0)
     S = As_t * (d_t - x) + As_c * (d_c - x)
     return {"x_mm": x, "I_mm4": I, "S_mm3": S, "A_mm2": At}
@@ -255,7 +260,9 @@ def _local_sls_response_serviceability(M_kNm: float, states: Dict, time_name: st
     k_cr = M_nmm / max(Ec * st["I_cr_mm4"], 1e-9)
     k_load = sign * (zeta * k_cr + (1.0 - zeta) * k_un)
     k_sh = st["orientation"] * (zeta * st["kcs_cr"] + (1.0 - zeta) * st["kcs_un"])
-    sigma_s = st["alpha_e"] * M_nmm * max(st["d_t"] - st["x_cr_mm"], 0.0) / max(st["I_cr_mm4"], 1e-9)
+    xs = st["x_cr_mm"] if zeta > 0 else st["x_un_mm"]
+    Is = st["I_cr_mm4"] if zeta > 0 else st["I_un_mm4"]
+    sigma_s = st["alpha_e"] * M_nmm * max(st["d_t"] - xs, 0.0) / max(Is, 1e-9)
     sigma_c = M_nmm * st["x_cr_mm"] / max(st["I_cr_mm4"], 1e-9) if zeta > 0 else M_nmm * st["x_un_mm"] / max(st["I_un_mm4"], 1e-9)
     wk = 0.0
     srmax = 0.0
