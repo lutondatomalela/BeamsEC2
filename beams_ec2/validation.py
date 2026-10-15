@@ -15,6 +15,8 @@ def validate_table(df, moment_axis, shear_axis, torsion_axis):
     numeric += [c for c in ("fx", "fy", "fz", "mx", "my", "mz") if c in df]
     for c in dict.fromkeys(numeric):
         bad = ~df[c].map(lambda v: isinstance(v, (int, float)) and math.isfinite(v))
+        if c == 'station' and 'station_source' in df:
+            bad &= ~((df.station_source == 'nó sem posição') & df.station.isna())
         if bad.any():
             rows = [str(i + 2) for i, v in enumerate(bad) if v][:10]
             raise ValueError(f"Valores inválidos em {c}; linhas: {', '.join(rows)}")

@@ -2,11 +2,11 @@
 
 Aplicação desktop para o dimensionamento e a verificação de vigas de betão armado segundo a **NP EN 1992-1-1**.
 
-O código-fonte nesta branch corresponde à **v0.2.0-rc4**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
+O código-fonte nesta branch corresponde à **v0.2.0-rc5**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
 
 ## Instalação para utilizadores
 
-Para testar a **rc4**, abra o workflow **Validation** desta branch no separador **Actions** e descarregue o artefacto `BeamsEC2-rc4-Windows-x64` de uma execução concluída com sucesso. Extraia o ZIP e abra `BeamsEC2.exe`. O artefacto permanece disponível durante 30 dias.
+Para testar a **rc5**, abra o workflow **Validation** desta branch no separador **Actions** e descarregue o artefacto `BeamsEC2-rc5-Windows-x64` de uma execução concluída com sucesso. Extraia o ZIP e abra `BeamsEC2.exe`. O artefacto permanece disponível durante 30 dias.
 
 A página **Releases** ainda contém a versão anterior v0.1.2.
 
@@ -38,6 +38,8 @@ Não é necessário instalar Python nem utilizar o terminal. Depois de descarreg
 - testes internos de sanidade e regressão.
 
 ## Tabela de entrada
+
+Também são aceites tabelas `Member/Point (m)/Case`, com posições `user x=…`, `auto x=…`, `x=…`, `origin (…)` e `end (…)`. Rótulos `+/- MY x=…` são preservados. Sem posições, as tabelas por nós permitem verificar as secções disponíveis, mas a flecha fica sem dados suficientes. Posições inválidas explicitamente fornecidas continuam a impedir a importação.
 
 Cada linha representa uma estação de uma viga numa combinação de acções. Devem ser utilizadas várias estações ao longo de cada membro; para ELS recomendam-se pelo menos cinco.
 

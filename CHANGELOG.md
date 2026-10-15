@@ -1,3 +1,10 @@
+# v0.2.0-rc5 - 2026-10-15
+
+- Importação Robot Member/Point (m)/Case: posições extraídas dos rótulos x, user/auto x, origin e end.
+- Preservação dos rótulos +/- sem deslocar a identificação da combinação.
+- Tabelas por nós sem posições aceites para secções; não são inventadas coordenadas para integrar flechas.
+- Ensaio do executável utiliza o formato por pontos, sem coluna Station separada.
+
 # v0.2.0-rc4 - 2026-10-15
 
 - Seleções independentes de ELU, ELS característica, frequente e quase-permanente, por números/listas/intervalos.

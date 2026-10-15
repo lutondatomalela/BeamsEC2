@@ -30,8 +30,8 @@ def run_smoke_test(output_directory):
         rows = []
         for case, factor in [(101, 1.0), (201, 0.8), (202, 0.7), (203, 0.6)]:
             for index, x in enumerate([0, 1.5, 3, 4.5, 6]):
-                rows.append({'Member/Node/Case': f'1/{index+1}/{case} (C)',
-                             'Station (m)': x, 'Length (m)': 6,
+                rows.append({'Member/Point (m)/Case': f'1/+/- MY x={x}/{case} (C)',
+                             'Length (m)': 6,
                              'HY (cm)': 30, 'HZ (cm)': 60, 'Material': 'C30/37',
                              'MY (kNm)': factor*100*(1-((x-3)/3)**2),
                              'FZ (kN)': factor*(50-x*100/6), 'MX (kNm)': 0,
