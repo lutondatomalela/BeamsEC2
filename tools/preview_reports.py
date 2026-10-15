@@ -21,7 +21,7 @@ class Value:
 def harness():
     data=[]
     for member,sign in [(1,1),(2,-1)]:
-        for case,factor in [('101 (C)',1),('102 (C)',-.7),('201 ELS QP',.6)]:
+        for case,factor in [('101 (C)',1),('102 (C)',-.7),('201 ELS QP',.6),('202 ELS CARACTERISTICA',.8),('203 ELS FREQ',.7)]:
             for i,x in enumerate([0,1.5,3,4.5,6]):
                 data.append({'Member/Node/Case':f'{member}/{i+1}/{case}',
                     'Station (m)':x,'Length (m)':6,'HY (cm)':30,'HZ (cm)':60,
@@ -30,6 +30,10 @@ def harness():
                     'MX (kNm)':5 if member==2 else 0,
                     'Support Condition':'Entre apoios (y0=yL=0)'})
     clean,env=_prepare_input_frames(pd.DataFrame(data))
+    from beams_ec2.combinations import classify_combinations
+    selection={'ELU':'101-102','ELS_CAR':'202','ELS_FREQ':'203','ELS_QP':'201'}
+    clean=classify_combinations(clean,selection)
+    env=classify_combinations(env,selection)
     app=SimpleNamespace(df_clean=clean,df_env=env,input_file_path='Caso sintético de validação',
           var_service_case=Value(''),var_ld_limit=Value(250),var_crack_limit=Value(.3),
           var_moment_axis=Value('MY'),var_cover=Value(35),var_fyk=Value(500),
@@ -43,7 +47,7 @@ def harness():
     app.df_validation=pd.DataFrame();app.df_notes=pd.DataFrame()
     app.df_longitudinal_detailing,app.df_longitudinal_profile=_longitudinal_detailing_advanced(app,app.df_results)
     app.df_internal_tests=_internal_tests_advanced()
-    app._parameters_df=lambda:pd.DataFrame([['Caso','Duas vigas; duas combinações ELU e uma ELS QP'],['L [m]',6],['Betão','C30/37'],['Recobrimento [mm]',35]],columns=['Parâmetro','Valor'])
+    app._parameters_df=lambda:pd.DataFrame([['Caso','Duas vigas; ELU 101-102; ELS QP 201, CAR 202 e FREQ 203'],['L [m]',6],['Betão','C30/37'],['Recobrimento [mm]',35]],columns=['Parâmetro','Valor'])
     for name in ('_pdf_df_table','_pdf_table_style','_write_pdf'):
         setattr(app,name,MethodType(getattr(BeamsEC2App,name),app))
     return app

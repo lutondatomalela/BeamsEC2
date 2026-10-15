@@ -25,6 +25,9 @@ def ensure_fonts():
 
 
 LABELS={
+ 'combination_group':'Grupo de combinação','limit_state':'Estado limite',
+ 'service_count_ELS_CAR':'ELS características','service_count_ELS_FREQ':'ELS frequentes',
+ 'service_count_ELS_QP':'ELS quase-permanentes','service_creep_status':'Validade da fluência linear',
  'viga':'Viga','member':'Membro','case':'Combinação','story':'Piso',
  'section_type':'Secção','section_geometry_summary':'Geometria [cm]',
  'section_geometry_source':'Origem da geometria','section_geometry_confidence':'Confiança',
@@ -62,6 +65,8 @@ LABELS={
 
 
 def cell_text(value,column):
+    if column=='combination_group':
+        return {'ELU':'ELU','ELS_CAR':'ELS característica','ELS_FREQ':'ELS frequente','ELS_QP':'ELS quase-permanente','NAO_CLASSIFICADA':'Não classificada / excluída'}.get(str(value),str(value))
     if value is None or (not isinstance(value,(list,dict)) and pd.isna(value)):
         return '-'
     if isinstance(value,bool):
@@ -120,7 +125,12 @@ def engineering_table(app,frame,columns,max_rows,widths,styles):
 
 
 def flatten_tables(story):
+    from reportlab.platypus import CondPageBreak
     result=[]
     for item in story:
+        if getattr(getattr(item,'style',None),'name','') in {'BodyCourier','Section'}:
+            # Reserve space for a heading and the first table rows, without
+            # keeping an entire multi-page table on the following page.
+            result.append(CondPageBreak(80))
         result.extend(getattr(item,'_engineering_tables',[item]))
     return result

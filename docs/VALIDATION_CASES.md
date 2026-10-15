@@ -52,3 +52,10 @@ Os testes verificam que combinações com momentos de sinais opostos usam exatam
 Acrescentados testes das equações do Anexo B para as classes de cimento S/N/R e diferentes resistências, da composição ponderada G+Q, da retração de secagem e autogénea e da curvatura de retração com integração até à flecha. O coeficiente de fluência é exatamente zero antes e no instante da carga.
 
 A verificação de PDF inclui os três tipos de relatório, texto extraído de todas as páginas e preservação da última linha de uma tabela larga com 80 linhas. As páginas de um caso sintético com duas vigas foram renderizadas e inspecionadas. A memória inclui todas as combinações, a reserva de torção e a convergência da armadura comum. `python tools/preview_reports.py` reproduz estes PDFs em `out/pdf_qa`.
+
+
+## Regimes de combinações
+
+Os testes de seleção cobrem intervalos, listas, vários tipos de hífen, sobreposições, números inexistentes, identificadores exatos e exclusão de casos não classificados. O teste de cálculo usa casos numerados com o marcador genérico (C), atribuindo os quatro grupos explicitamente.
+
+Um caso frequente com esforço muito superior aos restantes não pode governar wk/flecha QP nem as tensões CAR. A ausência de QP ou CAR é testada: o programa conserva o resultado ELU, deixa os resultados do regime em falta indisponíveis e devolve Verificar. O caso frequente é opcional e informativo. A necessidade de fluência não linear QP é distinguida de um incumprimento de resistência característico.

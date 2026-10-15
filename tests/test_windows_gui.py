@@ -25,7 +25,7 @@ class WindowsGUIIntegrationTests(unittest.TestCase):
             app.quit()
         app.report_callback_exception=lambda *args: error(*args)
         rows=[]
-        for case,factor in [('101 (C)',1.0),('201 ELS QP',0.6)]:
+        for case,factor in [('101 (C)',1.0),('201 (C)',0.6),('202 (C)',0.8),('203 (C)',0.7)]:
             for index,x in enumerate([0,1.5,3,4.5,6]):
                 rows.append({'Member/Node/Case':f'1/{index+1}/{case}',
                              'Station (m)':x,'Length (m)':6,'HY (cm)':30,'HZ (cm)':60,
@@ -34,6 +34,10 @@ class WindowsGUIIntegrationTests(unittest.TestCase):
                              'Support Condition':'Entre apoios (y0=yL=0)'})
         def start():
             try:
+                app.var_elu_cases.set('101')
+                app.var_sls_char_cases.set('202')
+                app.var_sls_freq_cases.set('203')
+                app.var_sls_qp_cases.set('201')
                 app.load_df(pd.DataFrame(rows),'CI integration')
                 app.run_design()
                 app.run_design()  # A second click must not start a second worker.
@@ -65,11 +69,20 @@ class WindowsGUIIntegrationTests(unittest.TestCase):
                 cover=parameters[parameters.iloc[:,0].astype(str).str.contains('Recobrimento')].iloc[0,1]
                 self.assertEqual(float(cover),35)
                 self.assertIn('service_wk_est_mm',app.df_results)
-                self.assertEqual(app.df_results.iloc[0]['service_combinations_checked'],1)
+                self.assertEqual(app.df_results.iloc[0]['service_combinations_checked'],3)
+                self.assertEqual(app.df_results.iloc[0]['service_group_crack'],'ELS_QP')
+                self.assertEqual(app.df_results.iloc[0]['service_group_steel'],'ELS_CAR')
                 with tempfile.TemporaryDirectory() as folder:
                     xlsx=Path(folder)/'result.xlsx'
                     app._write_excel(str(xlsx))
                     self.assertGreater(xlsx.stat().st_size,1000)
+                    from openpyxl import load_workbook
+                    workbook=load_workbook(xlsx,read_only=True)
+                    sheet=workbook['04A_Grupos_Combinacoes']
+                    values=list(sheet.values)
+                    column=values[0].index('combination_group')
+                    self.assertEqual({row[column] for row in values[1:]},{'ELU','ELS_CAR','ELS_FREQ','ELS_QP'})
+                    workbook.close()
                     for index,scope in enumerate(['Resumo executivo','Relatório técnico','Memória de cálculo']):
                         app.var_pdf_scope.set(scope)
                         pdf=Path(folder)/f'report{index}.pdf'

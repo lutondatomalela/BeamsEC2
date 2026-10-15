@@ -124,12 +124,9 @@ def extract_combination_number(case_value) -> str:
 
 
 def classify_limit_state(case_value) -> str:
-    s = str(case_value or "").upper()
-    if any(k in s for k in ["ELS", "SLS", "SERV", "SERVICE", "RARA", "FREQ", "QUASE", "QP", "CQC", "Q.P.", "(S)"]):
-        return "ELS"
-    if any(k in s for k in ["ELU", "ULS", "STR", "EQU", "GEO", "(U)", "(C)"]):
-        return "ELU"
-    return "ELU"
+    from .combinations import named_group
+    group=named_group(case_value)
+    return 'ELU' if group=='ELU' else 'ELS' if group.startswith('ELS_') else 'Não classificada'
 
 
 # ============================================================

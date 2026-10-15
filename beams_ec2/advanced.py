@@ -217,20 +217,11 @@ def _service_groups_advanced(app, r: pd.Series, target: str):
             cand = same
     if cand.empty:
         return [], "viga não encontrada"
-    target = str(target or "").strip()
-    if target and normalize_text(target) not in {"todas", "todos", "all"}:
-        tokens = [t.strip() for t in re.split(r"[;,|]+", target) if t.strip()]
-        selected = []
-        for case, grp in cand.groupby("case", dropna=False, sort=False):
-            cstr = str(case)
-            cnum = str(extract_combination_number(case))
-            if any(cstr == t or cnum == t or normalize_text(t) in normalize_text(cstr) for t in tokens):
-                selected.append((cstr, grp.copy()))
-        return selected, "combinação(ões) indicada(s)"
-    els = cand[cand["case"].map(_case_is_els_serviceability)]
-    if els.empty:
-        return [], "sem combinação ELS identificada"
-    return [(str(case), grp.copy()) for case, grp in els.groupby("case", dropna=False, sort=False)], "todas as combinações ELS reconhecidas"
+    from .combinations import classify_combinations,selections_from_app
+    if 'combination_group' not in cand:
+        cand=classify_combinations(cand,selections_from_app(app))
+    els=cand[cand['combination_group'].isin(['ELS_CAR','ELS_FREQ','ELS_QP'])]
+    return [(str(case),grp.copy()) for case,grp in els.groupby('case',dropna=False,sort=False)], 'grupos ELS selecionados'
 
 
 def _bar_label_area_advanced(label: str) -> float:
@@ -461,51 +452,46 @@ def _util_advanced(d: Dict, value_key: str, limit_key: str) -> float:
 
 
 def _governing_sls_advanced(items: List[Dict]) -> Dict:
+    from .combinations import GROUPS
     if not items:
-        return {"service_status": "Dados insuficientes", "service_note": "Sem combinações ELS calculadas."}
-    valid = [d for d in items if d.get("service_status") != "Dados insuficientes"]
-    pool = valid or items
-    crack = max(pool, key=lambda d: _util_advanced(d, "service_wk_est_mm", "service_wk_lim_mm"))
-    defl = max(pool, key=lambda d: _util_advanced(d, "service_deflection_est_mm", "service_deflection_lim_mm"))
-    steel = max(pool, key=lambda d: _util_advanced(d, "service_sigma_s_MPa", "service_sigma_s_lim_MPa"))
-    concrete = max(pool, key=lambda d: _util_advanced(d, "service_sigma_c_MPa", "service_sigma_c_lim_MPa"))
-    scored = []
-    for d in pool:
-        scored.append((max(
-            _util_advanced(d, "service_wk_est_mm", "service_wk_lim_mm"),
-            _util_advanced(d, "service_deflection_est_mm", "service_deflection_lim_mm"),
-            _util_advanced(d, "service_sigma_s_MPa", "service_sigma_s_lim_MPa"),
-            _util_advanced(d, "service_sigma_c_MPa", "service_sigma_c_lim_MPa"),
-        ), d))
-    overall = max(scored, key=lambda x: x[0])[1].copy()
-    for prefix, src in [("crack", crack), ("deflection", defl), ("steel", steel), ("concrete", concrete)]:
-        overall[f"service_combination_{prefix}"] = src.get("service_combination", "")
-    # Cada verificação conserva o valor da respectiva combinação governante.
-    for key in ["service_wk_est_mm", "service_wk_lim_mm", "service_crack_status"]:
-        overall[key] = crack.get(key)
-    for key in ["service_deflection_instant_mm", "service_deflection_final_mm", "service_deflection_est_mm", "service_deflection_lim_mm", "service_deflection_limit", "service_deflection_status"]:
-        overall[key] = defl.get(key)
-    for key in ["service_sigma_s_MPa", "service_sigma_s_lim_MPa", "service_stress_status"]:
-        overall[key] = steel.get(key)
-    for key in ["service_sigma_c_MPa", "service_sigma_c_lim_MPa", "service_concrete_status"]:
-        overall[key] = concrete.get(key)
-    combos = [str(d.get("service_combination", "")) for d in items]
-    overall["service_combinations_checked"] = len(items)
-    overall["service_combinations_list"] = "; ".join(combos)
-    overall["service_governing_combination"] = overall.get("service_combination", "")
-    if any(d.get("service_status") == "Não verifica" for d in items):
-        overall["service_status"] = "Não verifica"
-    elif any(d.get("service_status") == "Dados insuficientes" for d in items):
-        overall["service_status"] = "Dados insuficientes"
-    else:
-        overall["service_status"] = "OK"
-    overall["service_note"] = (
-        f"Envelope de {len(items)} combinação(ões) ELS. Governantes: "
-        f"wk={overall.get('service_combination_crack','')}; "
-        f"flecha={overall.get('service_combination_deflection','')}; "
-        f"aço={overall.get('service_combination_steel','')}; "
-        f"betão={overall.get('service_combination_concrete','')}."
-    )
+        return {"service_status":"Dados insuficientes","service_note":"Sem combinações ELS classificadas."}
+    def choose(group,value,limit):
+        candidates=[d for d in items if d.get('service_group')==group and math.isfinite(safe_float(d.get(value)))]
+        return max(candidates,key=lambda d:_util_advanced(d,value,limit)) if candidates else {}
+    crack=choose('ELS_QP','service_wk_est_mm','service_wk_lim_mm')
+    defl=choose('ELS_QP','service_deflection_est_mm','service_deflection_lim_mm')
+    steel=choose('ELS_CAR','service_sigma_s_MPa','service_sigma_s_lim_MPa')
+    concrete=choose('ELS_CAR','service_sigma_c_MPa','service_sigma_c_lim_MPa')
+    creep=choose('ELS_QP','service_sigma_c_MPa','service_sigma_c_lim_MPa')
+    overall=(defl or items[0]).copy()
+    fields={
+      'crack':(crack,['service_wk_est_mm','service_wk_lim_mm','service_crack_status']),
+      'deflection':(defl,['service_deflection_instant_mm','service_deflection_final_mm','service_deflection_est_mm','service_deflection_lim_mm','service_deflection_limit','service_deflection_status']),
+      'steel':(steel,['service_sigma_s_MPa','service_sigma_s_lim_MPa','service_stress_status']),
+      'concrete':(concrete,['service_sigma_c_MPa','service_sigma_c_lim_MPa','service_concrete_status'])}
+    missing=[]
+    for name,(src,keys) in fields.items():
+        overall['service_combination_'+name]=src.get('service_combination','')
+        overall['service_group_'+name]=src.get('service_group','')
+        for key in keys:
+            overall[key]=src.get(key,'Dados insuficientes' if key.endswith('status') else float('nan'))
+        if not src:missing.append('ELS_QP' if name in ('crack','deflection') else 'ELS_CAR')
+    overall['service_creep_sigma_c_MPa']=creep.get('service_sigma_c_MPa',float('nan'))
+    overall['service_creep_sigma_c_lim_MPa']=creep.get('service_sigma_c_lim_MPa',float('nan'))
+    overall['service_creep_status']=creep.get('service_creep_status','Dados insuficientes')
+    overall['service_combination_creep']=creep.get('service_combination','')
+    overall['service_combinations_checked']=len(items)
+    overall['service_combinations_list']='; '.join(str(d.get('service_combination','')) for d in items)
+    overall['service_governing_combination']=overall.get('service_combination_deflection','')
+    for group in GROUPS[1:]:
+        overall['service_count_'+group]=sum(d.get('service_group')==group for d in items)
+    failing=any(d.get('service_status')=='Não verifica' for d in items)
+    incomplete=missing or any(d.get('service_status')=='Dados insuficientes' for d in items)
+    overall['service_status']='Não verifica' if failing else 'Dados insuficientes' if incomplete else 'OK'
+    overall['service_note']='Verificações por regime: wk/flecha QP; tensões CAR; limite de fluência linear QP; FREQ informativo.'
+    if missing:overall['service_note']+=' Em falta ou inválidas: '+', '.join(sorted(set(missing)))+'.'
+    if overall['service_creep_status']=='Requer fluência não linear':
+        overall['service_note']+=' Tensão QP superior a 0,45 fck: requer fluência não linear.'
     return overall
 
 
@@ -537,7 +523,7 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
         app.df_sls_combinations = pd.DataFrame()
         return results
     out = results.copy()
-    target = app.var_service_case.get().strip() if hasattr(app, "var_service_case") else ""
+    target = ""  # Explicit disjoint groups replace the legacy single selector.
     base_params = _sls_params_from_app_advanced(app)
     all_points = []
     all_combos = []
@@ -553,8 +539,12 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             continue
         member_items = []
         for case_label, group in groups:
-            params = _params_for_case_advanced(base_params, case_label)
+            from .combinations import parameters_for_group,apply_check_policy
+            combination_group=str(group['combination_group'].iloc[0])
+            params=parameters_for_group(base_params,combination_group)
             sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+            sls=apply_check_policy(sls,combination_group)
+            for point in points:point['combination_group']=combination_group
             member_items.append(sls)
             all_points.extend(points)
             all_combos.append({
@@ -574,9 +564,12 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             out.at[idx, "status"] = "Verificar"
     app.df_sls_points = pd.DataFrame(all_points)
     app.df_sls_combinations = pd.DataFrame(all_combos)
-    app.df_sls_parameters = pd.DataFrame([
-        ["Regime base", base_params.regime], ["Regime automático", "Sim" if base_params.auto_regime else "Não"],
-        ["Combinações ELS", target or "todas as reconhecidas"], ["Condição de apoio", base_params.support_condition],
+    from .combinations import GROUPS,classify_combinations,selections_from_app
+    classified=classify_combinations(app.df_clean,selections_from_app(app)) if 'combination_group' not in app.df_clean else app.df_clean
+    group_rows=[["Combinações "+g,'; '.join(classified.loc[classified.combination_group==g,'case'].astype(str).drop_duplicates()) or 'não disponíveis'] for g in GROUPS]
+    app.df_sls_parameters = pd.DataFrame(group_rows+[
+        ["Classificação ELS", "CAR / FREQ / QP; sem regime base implícito"],
+        ["Combinações ELS", "grupos CAR / FREQ / QP selecionados"], ["Condição de apoio", base_params.support_condition],
         ["Histórico de carregamento", base_params.history_mode], ["Fração permanente [%]", base_params.permanent_fraction_pct],
         ["t0,G [dias]", base_params.t0_permanent_days], ["t0,Q [dias]", base_params.t0_variable_days],
         ["RH [%]", base_params.rh_pct], ["t0 efectivo [dias]", base_params.t0_days], ["t [dias]", base_params.t_days],
@@ -595,6 +588,9 @@ def _sls_audit_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         "viga", "member", "name", "story", "case", "service_governing_combination",
         "service_combinations_checked", "service_combination_crack", "service_combination_deflection",
         "service_combination_steel", "service_combination_concrete", "service_regime",
+        "service_group_crack", "service_group_deflection", "service_group_steel", "service_group_concrete",
+        "service_count_ELS_CAR", "service_count_ELS_FREQ", "service_count_ELS_QP",
+        "service_creep_sigma_c_MPa", "service_creep_sigma_c_lim_MPa", "service_creep_status", "service_combination_creep",
         "service_support_condition", "service_history_mode", "service_reinforcement_model",
         "service_points_imported", "service_diagram_quality", "service_phi_creep",
         "service_phi_creep_G", "service_phi_creep_Q", "service_eps_cs_permille", "service_Ec_eff_MPa",
@@ -784,6 +780,10 @@ def _internal_tests_advanced() -> pd.DataFrame:
 def _ensure_sls_vars_advanced(self):
     _ensure_sls_vars_serviceability(self)
     defaults = {
+        "var_elu_cases": (tk.StringVar, ""),
+        "var_sls_char_cases": (tk.StringVar, ""),
+        "var_sls_freq_cases": (tk.StringVar, ""),
+        "var_sls_qp_cases": (tk.StringVar, ""),
         "var_service_auto_regime": (tk.BooleanVar, True),
         "var_support_condition": (tk.StringVar, "Automática / por tabela"),
         "var_history_mode": (tk.StringVar, "Duas fases G+Q"),
@@ -966,9 +966,18 @@ def _run_design_advanced(self):
         cot_theta=2.0, crack_limit_mm=finite(self.var_crack_limit.get(), 0.30),
         deflection_ld_limit=finite(self.var_ld_limit.get(), 250.0), calc_mode=self.var_calc_mode.get(),
     )
-    elu_env = self.df_env[~self.df_env["case"].map(_case_is_els_serviceability)].copy() if "case" in self.df_env.columns else self.df_env.copy()
+    from .combinations import classify_combinations,selections_from_app
+    try:
+        selection=selections_from_app(self)
+        clean=classify_combinations(self.df_clean,selection)
+        envelopes=classify_combinations(self.df_env,selection)
+    except ValueError as exc:
+        messagebox.showwarning("Combinações",str(exc)); return
+    self.df_clean,self.df_env=clean,envelopes
+    self.show_df(self.tree_env,self.df_env)
+    elu_env=self.df_env[self.df_env['combination_group']=='ELU'].copy()
     if elu_env.empty:
-        messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
+        messagebox.showwarning("Aviso", "Indique as combinações ELU. Os casos não classificados não são assumidos como ELU.")
         return
     from .calculation import snapshot_inputs
     snapshot=snapshot_inputs(self)
@@ -1010,7 +1019,8 @@ def _run_design_advanced(self):
                 self.update_report(); self.progress_var.set(100.0)
                 n_ver=int((results["status"]=="Verificar").sum()) if "status" in results.columns else 0
                 n_tests_fail=int((self.df_internal_tests["Estado"]=="Falha").sum()) if not self.df_internal_tests.empty else 0
-                self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; testes internos com {n_tests_fail} falhas.")
+                ignored=snapshot.df_env.loc[snapshot.df_env['combination_group']=='NAO_CLASSIFICADA','case'].nunique()
+                self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; {ignored} combinações não classificadas excluídas; testes internos com {n_tests_fail} falhas.")
             self.after(0, finish)
         except Exception as exc:
             msg=str(exc)
@@ -1034,9 +1044,12 @@ def _parameters_df_advanced(self):
         return cached.copy()
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
-    extra = pd.DataFrame([
-        ["Envelope ELS", "todas as combinações reconhecidas" if not self.var_service_case.get().strip() else self.var_service_case.get().strip()],
-        ["Regime automático", "Sim" if p.auto_regime else "Não"], ["Condição de apoio", p.support_condition],
+    if not base.empty:
+        base=base[~base.iloc[:,0].astype(str).str.contains('Regime ELS|Redução|Combinação ELS|Regime automático',case=False,regex=True)].copy()
+    from .combinations import selections_from_app
+    selection=selections_from_app(self)
+    extra = pd.DataFrame([["Combinações "+group,value or "nome explícito / não selecionada"] for group,value in selection.items()]+[
+        ["Critérios ELS", "wk e flecha final: QP; tensões: CAR; frequente: informativo"], ["Condição de apoio", p.support_condition],
         ["Histórico", p.history_mode], ["Fração permanente [%]", p.permanent_fraction_pct],
         ["t0,G [dias]", p.t0_permanent_days], ["t0,Q [dias]", p.t0_variable_days],
         ["Armadura ELS", "local por Station quando fornecida; caso contrário uniforme"],
@@ -1058,6 +1071,7 @@ def _write_excel_advanced(self, path: str):
         from openpyxl.utils import get_column_letter
         wb = load_workbook(path)
         datasets = [
+            ("04A_Grupos_Combinacoes", self.df_env[[c for c in ['case','combination_group','limit_state','combination_classification_source'] if c in self.df_env]].drop_duplicates()),
             ("11C_ELS_Combinacoes", getattr(self, "df_sls_combinations", pd.DataFrame())),
             ("12A_Porm_Longitudinal", getattr(self, "df_longitudinal_detailing", pd.DataFrame())),
             ("12B_Perfil_Armadura", getattr(self, "df_longitudinal_profile", pd.DataFrame())),
@@ -1167,7 +1181,7 @@ def _update_report_advanced(self):
         "Relatório resumido de dimensionamento de vigas\n\n",
         f"Envelopes analisados: {n_total} | OK: {n_ok} | Falhas: {n_fail}\n",
         f"Suporte normativo: {NORMATIVE_SUPPORT_EXTENDED}\n",
-        f"ELS: {self.var_service_case.get().strip() if hasattr(self,'var_service_case') and self.var_service_case.get().strip() else 'todas as combinações reconhecidas'}\n\n",
+        "ELS por regime: QP para wk/flecha; CAR para tensões; FREQ informativo.\n\n",
     ]
     for _, r in src.head(120).iterrows():
         lines.append(f"Viga {_beam_label_labels(r)} | Caso ELU {r.get('case','')} | Piso {r.get('story','')}\n")
@@ -1222,11 +1236,11 @@ def _write_pdf_advanced(self, path: str):
     story += [
         Paragraph("Geometria identificada",styles["BodyCourier"]),self._pdf_df_table(geom,["viga","story","section_type","section_geometry_summary","section_geometry_source","section_geometry_confidence","section_fit_error_pct"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Critérios de cálculo",styles["BodyCourier"]),self._pdf_df_table(self._parameters_df(),["Parâmetro","Valor"],max_rows=None,widths=[90,180]),Spacer(1,5*mm),
-        Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Envelopes de esforços",styles["BodyCourier"]),self._pdf_df_table(env,["viga","story","case","section_type","combination_group","n_points_found","length","material","m_pos_ed_kNm","m_neg_ed_kNm","v_ed_kN","t_ed_kNm"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Flexão",styles["BodyCourier"]),self._pdf_df_table(_flexure_audit_df_calculation(results),["viga","case","m_pos_ed_kNm","mrd_pos_kNm","eta_m_pos","bot_rebar","m_neg_ed_kNm","mrd_neg_kNm","eta_m_neg","top_rebar","ductility_pos","ductility_neg"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Esforço transverso e torção",styles["BodyCourier"]),self._pdf_df_table(_vt_audit_df_calculation(results),["viga","case","v_ed_kN","VRd_c_kN","VRd_max_kN","cot_theta_shear","t_ed_kNm","TRd_max_kNm","eta_vt","torsion_considered","Asw_s_total_req_mm2_per_m","Asw_s_prov_mm2_per_m","shear_status","torsion_status"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_status"],max_rows=None),Spacer(1,5*mm),
-        Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Envelope ELS",styles["BodyCourier"]),self._pdf_df_table(sls,["viga","service_combinations_checked","service_count_ELS_CAR","service_count_ELS_FREQ","service_count_ELS_QP","service_combination_crack","service_combination_deflection","service_combination_steel","service_combination_concrete","service_support_condition","service_history_mode","service_reinforcement_model","service_wk_est_mm","service_wk_lim_mm","service_deflection_est_mm","service_deflection_lim_mm","service_sigma_s_MPa","service_sigma_c_MPa","service_creep_status","service_status"],max_rows=None),Spacer(1,5*mm),
+        Paragraph("Pormenorização longitudinal",styles["BodyCourier"]),self._pdf_df_table(detail,["viga","case","bot_rebar","top_rebar","lbd_bot_mm","lbd_top_mm","shift_al_mm","extension_bot_mm","extension_top_mm","min_bottom_bars_into_support","detailing_note"],max_rows=None),Spacer(1,5*mm),
         Paragraph("Testes internos",styles["BodyCourier"]),self._pdf_df_table(tests,["Teste","Calculado","Referência","Erro relativo","Tolerância","Estado"],max_rows=None),
     ]
     if failures is not None and not failures.empty:

@@ -1,7 +1,7 @@
 # Avaliação de robustez do BeamsEC2
 
 Data: 15 de outubro de 2026. Base: `f883304d7a80e4f1425d6418546dd96429e8740a`.
-Estado: versão candidata de validação, `v0.2.0-rc3`.
+Estado: versão candidata de validação, `v0.2.0-rc4`.
 
 ## Conclusão técnica
 
@@ -39,9 +39,20 @@ A representação G+Q dos efeitos diferidos utiliza um coeficiente de fluência 
 
 Os parâmetros são capturados antes do arranque do processo de cálculo e conservados para os relatórios. Não é permitida a substituição da tabela nem uma segunda análise em simultâneo. A exportação durante o cálculo é bloqueada.
 
+## Separação explícita das combinações
+
+São selecionados quatro grupos disjuntos, por número/lista/intervalo. Em modo manual, os restantes casos são excluídos. Sem seleção, só se aceitam nomes explícitos; o marcador genérico (C) não define ELU. A classificação é reaplicada no arranque do cálculo e fica fixada no seu conjunto de dados.
+
+- ELU: dimensionamento da armadura comum e verificações de resistência.
+- ELS característica: tensões de cálculo em serviço, com limites implementados de 0,8 fyk para o aço e 0,6 fck para o betão; o limite de betão é aplicado conservadoramente sem uma seleção automática por exposição.
+- ELS quase-permanente: wk, flecha final e controlo de 0,45 fck para a hipótese de fluência linear. A necessidade de fluência não linear produz Verificar, se não existir outro incumprimento; não é tratada como rotura resistente do betão.
+- ELS frequente: resultados calculados e identificados como informativos; não substituem QP/CAR nas verificações implementadas de vigas de betão armado sem pré-esforço.
+
+QP e CAR têm governantes independentes. A falta de qualquer um destes regimes para uma viga impede o estado global ELS OK. A verificação dos esforços ELU pode prosseguir. O XLSX inclui 04A_Grupos_Combinacoes com os casos selecionados e não classificados; os resultados por combinação e os pontos ELS conservam o regime atribuído.
+
 ## Base normativa consultada
 
-- NP EN 1992-1-1:2010: 3.1.7 e Quadro 3.1; 6.1; 6.2.3; 6.3.2, expressões (6.28), (6.29) e (6.30); Secção 7.
+- NP EN 1992-1-1:2010: 3.1.7 e Quadro 3.1; 6.1; 6.2.3; 6.3.2, expressões (6.28), (6.29) e (6.30); Secção 7, nomeadamente 7.2, Quadro 7.1N e 7.4.
 - NP EN 1992-1-1:2010/AC:2012: correções em 6.1 relativas a compressão/excentricidade; não autorizam omitir N-M.
 - NP EN 1992-1-1:2010/A1:2019: emendas consultadas; as alterações de punçoamento não são utilizadas para o cálculo das vigas nesta revisão.
 
@@ -49,7 +60,7 @@ Os documentos normativos fornecidos pelo utilizador não são redistribuídos no
 
 ## Verificação executada
 
-- 62 testes de cálculo, importação e exportação, mais um ensaio de integração Tk exclusivo de Windows.
+- 79 testes de cálculo, importação e exportação, mais um ensaio de integração Tk exclusivo de Windows.
 - Referências analíticas de secções ELS, fissuração e integração documentadas em [VALIDATION_CASES.md](VALIDATION_CASES.md).
 - 10 verificações internas já existentes.
 - Exportação XLSX pela cadeia final da aplicação, reabertura e confirmação das folhas de resultados, corte/torção, geometria, ELS e pormenorização.

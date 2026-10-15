@@ -2,7 +2,7 @@
 
 Aplicação desktop para o dimensionamento e a verificação de vigas de betão armado segundo a **NP EN 1992-1-1**.
 
-O código-fonte nesta branch corresponde à **v0.2.0-rc3**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
+O código-fonte nesta branch corresponde à **v0.2.0-rc4**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
 
 ## Instalação para utilizadores
 
@@ -67,6 +67,23 @@ TF Bottom (cm) | TW (cm) | I Top
 ```
 
 A tabela-tipo incluída contém ainda colunas opcionais para condições de apoio, armadura local e secções T ou I. Os eixos utilizados no cálculo podem ser alterados na interface.
+
+## Classificação das combinações
+
+A interface tem quatro campos independentes. Cada campo aceita listas e intervalos separados por espaços, vírgulas ou ponto e vírgula. A numeração não identifica automaticamente o estado limite.
+
+| Campo | Exemplo de seleção | Utilização |
+| --- | --- | --- |
+| ELU | `101-133` | Dimensionamento e resistência |
+| ELS característica | `205-220` | Tensões no aço e no betão |
+| ELS frequente | `202` | Resultados separados, informativos para as verificações implementadas |
+| ELS quase-permanente | `203` | Fissuração, flecha final e controlo da hipótese de fluência linear |
+
+Os números acima são exemplos e devem corresponder à tabela importada. Sobreposições entre grupos e números não encontrados impedem o cálculo. Quando existe uma seleção manual, todos os casos não selecionados ficam excluídos; não são assumidos como ELU.
+
+Sem seleção manual, apenas nomes explícitos como `ELU`, `ELS CARACTERÍSTICA`, `ELS FREQ` ou `ELS QP` são reconhecidos. A indicação `(C)` significa apenas combinação. `ELS` sem regime definido fica por classificar.
+
+A ausência de combinações QP ou características para uma viga impede o estado global ELS **OK**, mas permite calcular o ELU e as verificações disponíveis. Se a tensão QP exceder 0,45 fck, o programa pede revisão da fluência não linear; isto não é confundido com o controlo de resistência às tensões características. A folha `04A_Grupos_Combinacoes` documenta a classificação e os casos excluídos.
 
 ## Identificação geométrica
 

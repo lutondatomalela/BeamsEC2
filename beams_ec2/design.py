@@ -315,10 +315,10 @@ def _pdf_styles_report_base():
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], alignment=TA_CENTER, fontName="Courier-Bold", fontSize=14, leading=21, spaceAfter=10))
     styles.add(ParagraphStyle(name="ReportSubtitle", parent=styles["Normal"], alignment=TA_CENTER, fontName="Courier", fontSize=10, leading=15, textColor=colors.darkgrey, spaceAfter=8))
-    styles.add(ParagraphStyle(name="BodyCourier", parent=styles["Normal"], fontName="Courier", fontSize=9, leading=13.5, spaceAfter=6, keepWithNext=1))
+    styles.add(ParagraphStyle(name="BodyCourier", parent=styles["Normal"], fontName="Courier", fontSize=9, leading=13.5, spaceAfter=6, keepWithNext=0))
     styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontName="Courier", fontSize=7.2, leading=10.8))
     styles.add(ParagraphStyle(name="Cell", parent=styles["Normal"], fontName="Courier", fontSize=6.5, leading=9.75, alignment=TA_LEFT))
-    styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], fontName="Courier-Bold", fontSize=11, leading=16.5, spaceBefore=10, spaceAfter=16, textColor=colors.HexColor("#1F4E5F")))
+    styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], fontName="Courier-Bold", fontSize=11, leading=16.5, spaceBefore=10, spaceAfter=16, keepWithNext=0, textColor=colors.HexColor("#1F4E5F")))
     return styles
 
 
