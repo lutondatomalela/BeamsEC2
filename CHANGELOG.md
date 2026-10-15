@@ -5,6 +5,8 @@
 - Critérios separados: tensões CAR, fissuração/flecha QP e limite de fluência linear QP; FREQ informativo e rastreável.
 - Falta de CAR/QP assinalada sem substituir um regime por outro; tensão QP > 0,45 fck exige revisão da fluência não linear.
 - Classificação documentada na interface, nos parâmetros, no XLSX e no PDF; folha 04A_Grupos_Combinacoes.
+- Compilação automática Windows x64; ensaio dentro do executável com importação, cálculo e exportações, antes de disponibilizar o artefacto.
+- Distribuição acompanhada de commit, dependências e SHA256.
 - 79 testes gerais e um ensaio de integração Windows, além das dez verificações internas.
 
 # v0.2.0-rc3 - 2026-10-15
