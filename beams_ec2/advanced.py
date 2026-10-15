@@ -516,7 +516,7 @@ def _sls_params_from_app_advanced(app) -> SLSParametersAdvanced:
     )
 
 
-def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
+def _apply_serviceability_advanced(app, results: pd.DataFrame, progress_callback=None) -> pd.DataFrame:
     if results is None or results.empty:
         app.df_sls_points = pd.DataFrame()
         app.df_sls_parameters = pd.DataFrame()
@@ -527,8 +527,20 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     base_params = _sls_params_from_app_advanced(app)
     all_points = []
     all_combos = []
-    for idx, r in out.iterrows():
-        groups, source_note = _service_groups_advanced(app, r, target)
+    service_groups = {}
+    calculations = {}
+    for done, (idx, r) in enumerate(out.iterrows(), 1):
+        if progress_callback:
+            progress_callback(done, len(out))
+        cage_key = (repr(_profile_from_result_serviceability(r)),) + tuple(
+            str(r.get(c, '')) for c in ('member', 'name', 'story', 'material', 'fck_MPa',
+            'fyk_MPa', 'length_m', 'as_prov_bot_mm2', 'as_prov_top_mm2',
+            'd_bot_mm', 'd_top_mm', 'bot_rebar', 'top_rebar',
+            'bot_clear_spacing_mm', 'top_clear_spacing_mm', 'phi_st_mm', 'cover_mm'))
+        group_key = (str(r.get('member', '')), str(r.get('story', '') or ''))
+        if group_key not in service_groups:
+            service_groups[group_key] = _service_groups_advanced(app, r, target)
+        groups, source_note = service_groups[group_key]
         if not groups:
             out.at[idx, "service_status"] = "Dados insuficientes"
             out.at[idx, "service_note"] = "Sem combinação ELS correspondente; resultado de serviço não validado."
@@ -542,15 +554,19 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             from .combinations import parameters_for_group,apply_check_policy
             combination_group=str(group['combination_group'].iloc[0])
             params=parameters_for_group(base_params,combination_group)
-            sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
-            sls=apply_check_policy(sls,combination_group)
-            for point in points:point['combination_group']=combination_group
-            member_items.append(sls)
-            all_points.extend(points)
-            all_combos.append({
-                "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
-                **sls,
-            })
+            cache_key = (cage_key, case_label, combination_group)
+            if cache_key not in calculations:
+                sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+                sls = apply_check_policy(sls, combination_group)
+                calculations[cache_key] = sls
+                for point in points:
+                    point['combination_group'] = combination_group
+                all_points.extend(points)
+                all_combos.append({
+                    "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
+                    **sls,
+                })
+            member_items.append(calculations[cache_key])
         governing = _governing_sls_advanced(member_items)
         for k, v in governing.items():
             out.at[idx, k] = v
@@ -645,7 +661,19 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
     )
     raw = app.df_clean if getattr(app, "df_clean", None) is not None else pd.DataFrame()
     moment_col = str(app.var_moment_axis.get()).lower() if hasattr(app, "var_moment_axis") else "my"
+    # A common cage is designed per member. Detail it once, retaining every ELU case.
+    from .combinations import classify_combinations, selections_from_app
+    if not raw.empty:
+        if 'combination_group' not in raw:
+            raw = classify_combinations(raw, selections_from_app(app))
+        raw = raw[raw.combination_group == 'ELU']
+    member_data = {str(member): group for member, group in raw.groupby('member', sort=False)} if not raw.empty else {}
+    detailed = set()
     for _, r in results.iterrows():
+        key = tuple(str(r.get(c, '')) for c in ('member', 'name', 'story', 'bot_rebar', 'top_rebar', 'd_bot_mm', 'd_top_mm'))
+        if key in detailed:
+            continue
+        detailed.add(key)
         p = _profile_from_result_serviceability(r)
         fck = finite(r.get("fck_MPa"), parse_concrete_strength(r.get("material", DEFAULT_CONCRETE_CLASS)))
         fyd = finite(r.get("fyd_MPa"), finite(app.var_fyk.get(), 500.0) / DEFAULT_GAMMA_S_Reporting)
@@ -671,7 +699,7 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         })
         if raw.empty:
             continue
-        cand = raw[(raw["member"].astype(str) == str(r.get("member", ""))) & (~raw["case"].map(_case_is_els_serviceability))].copy()
+        cand = member_data.get(str(r.get('member', '')), raw.iloc[:0])
         story = str(r.get("story", "") or "")
         if story and "story" in cand.columns:
             same = cand[cand["story"].astype(str) == story]
@@ -992,8 +1020,13 @@ def _run_design_advanced(self):
         try:
             results = designer.design_dataframe(input_df, progress_callback=progress)
             self.after(0, lambda: self.status_var.set("A calcular envelope ELS..."))
-            results = _apply_serviceability_advanced(snapshot, results)
+            def sls_progress(done, total):
+                if done == 1 or done == total or done % 25 == 0:
+                    self.after(0, lambda d=done, t=total: self.status_var.set(f"A calcular ELS... {d}/{t} resultados"))
+            results = _apply_serviceability_advanced(snapshot, results, progress_callback=sls_progress)
+            self.after(0, lambda: self.status_var.set("A verificar pormenorização longitudinal..."))
             self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(snapshot, results)
+            self.after(0, lambda: self.status_var.set("A preparar resultados e validação..."))
             self.df_internal_tests = _internal_tests_advanced()
             summary = build_summary_by_member(results) if snapshot.var_summary.get() else pd.DataFrame()
             failures = results[results["status"] == "Falha"].copy() if "status" in results.columns else pd.DataFrame()

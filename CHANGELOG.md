@@ -1,3 +1,11 @@
+# v0.2.0-rc6 - 2026-10-15
+
+- Reutilização das verificações ELS da mesma secção/armadura, mantendo resultados por combinação ELU e invalidando a reutilização quando mudam geometria, aço, profundidades ou recobrimento.
+- Pontos e combinações ELS deixam de ser duplicados por cada combinação ELU com a mesma armadura.
+- Pormenorização calculada uma vez por armadura comum e barra; seleção explícita de ELU exclui ELS numerados.
+- Mensagens de progresso distinguem ELU, ELS, pormenorização e preparação dos resultados.
+- Ensaio local com 704 970 linhas: núcleo ELU/ELS ~15 s e pormenorização ~2 s (sem leitura/importação); antes, núcleo ~109 s.
+
 # v0.2.0-rc5 - 2026-10-15
 
 - Importação Robot Member/Point (m)/Case: posições extraídas dos rótulos x, user/auto x, origin e end.

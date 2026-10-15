@@ -2,11 +2,11 @@
 
 Aplicação desktop para o dimensionamento e a verificação de vigas de betão armado segundo a **NP EN 1992-1-1**.
 
-O código-fonte nesta branch corresponde à **v0.2.0-rc5**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
+O código-fonte nesta branch corresponde à **v0.2.0-rc6**, candidata de validação. Consulte a [avaliação técnica e os limites de utilização](docs/ROBUSTNESS_REVIEW.md). A distribuição Windows anteriormente publicada é a **v0.1.2** e não incorpora estas correções. O projecto inclui uma aplicação gráfica, uma distribuição executável para Windows e o código-fonte modular para revisão e desenvolvimento.
 
 ## Instalação para utilizadores
 
-Para testar a **rc5**, abra o workflow **Validation** desta branch no separador **Actions** e descarregue o artefacto `BeamsEC2-rc5-Windows-x64` de uma execução concluída com sucesso. Extraia o ZIP e abra `BeamsEC2.exe`. O artefacto permanece disponível durante 30 dias.
+Para testar a **rc6**, abra o workflow **Validation** desta branch no separador **Actions** e descarregue o artefacto `BeamsEC2-rc6-Windows-x64` de uma execução concluída com sucesso. Extraia o ZIP e abra `BeamsEC2.exe`. O artefacto permanece disponível durante 30 dias.
 
 A página **Releases** ainda contém a versão anterior v0.1.2.
 
@@ -181,3 +181,5 @@ Get-Content "out/frozen check/smoke-test.json"
 ```
 
 O ensaio deve terminar com `"ok": true`. Sem `--smoke-test`, o executável abre a interface habitual. A compilação utiliza PyInstaller fixado e regista as versões efectivamente instaladas; não garante executáveis idênticos byte a byte. Os artefactos de CI destinam-se a validação da candidata e não substituem uma release aprovada.
+
+Os cálculos ELS equivalentes são reutilizados para a mesma secção e armadura. Os resultados ELU continuam separados por combinação; os pontos ELS e a pormenorização da armadura comum são apresentados sem repetições por combinação ELU.
