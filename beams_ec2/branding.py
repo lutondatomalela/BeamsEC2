@@ -14,4 +14,5 @@ def apply_icon(window):
     window.iconphoto(True,image)
     window._program_icon=image
     if sys.platform=='win32':
-        window.iconbitmap(str(asset_path('beamsec2.ico')))
+        window.iconbitmap(default=str(asset_path('beamsec2.ico')))
+        window._program_icon_path=asset_path('beamsec2.ico')

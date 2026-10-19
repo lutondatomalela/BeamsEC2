@@ -13,7 +13,7 @@ def run_smoke_test(directory):
         import xlrd
         from .release import BeamsEC2App,APP_VERSION,read_table_file
         app=BeamsEC2App();app.withdraw()
-        if not app.iconbitmap() or not hasattr(app,'_program_icon'):
+        if not app._program_icon_path.is_file() or app._program_icon.width()!=256:
             raise RuntimeError('Application icon not applied')
         failures=[];completed=[]
         def fail(*args,**kwargs):
