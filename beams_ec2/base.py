@@ -244,7 +244,8 @@ def _max_abs_with_pos(grp: pd.DataFrame, col: str) -> Tuple[float, str]:
     idx = vals.idxmax()
     pos = grp.loc[idx].get("station", "")
     if not math.isfinite(finite(pos, float("nan"))):
-        pos = grp.loc[idx].get("node", "")
+        node = str(grp.loc[idx].get("node", "")).strip()
+        pos = f"Nó {node}" if node else "posição não disponível"
     return float(vals.loc[idx]), str(pos)
 
 
@@ -266,7 +267,8 @@ def _max_signed(grp: pd.DataFrame, col: str, positive: bool = True) -> Tuple[flo
         value = float(abs(series.loc[idx]))
     pos = grp.loc[idx].get("station", "")
     if not math.isfinite(finite(pos, float("nan"))):
-        pos = grp.loc[idx].get("node", "")
+        node = str(grp.loc[idx].get("node", "")).strip()
+        pos = f"Nó {node}" if node else "posição não disponível"
     return value, str(pos)
 
 
@@ -1028,6 +1030,8 @@ class BeamsEC2App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
+        from .branding import apply_icon
+        apply_icon(self)
         self.geometry("1280x780")
         self.minsize(980, 620)
 

@@ -47,3 +47,11 @@ Os tempos foram medidos no ambiente local e excluem a importação e o cálculo 
 A pormenorização mudou deliberadamente: utiliza os grupos ELU selecionados, elimina repetições por solução e deixa de produzir perfis de dispensas inferidos quando os diagramas são insuficientes no modo explícito. Os 1 425 registos repetidos passaram a 70 soluções distintas com notas de amarração e perfil incompleto no ensaio por nós. Não se atribui a redução de tempo apenas à reutilização.
 
 Foram acrescentados cinco testes: reutilização de soluções iguais, invalidação por mudança do recobrimento, invalidação entre análises, seleção correta dos casos na pormenorização e preservação de ângulos de corte diferentes. A compilação inclui um ensaio dentro do executável, sem Python externo, com importação e exportações.
+
+## Etapa 4 — avaliação da memória e identidade visual
+
+A avaliação de uma memória real revelou que a indicação de localização concatenava `x=... m` a identificadores de nós, omitia os estados Verificar no cabeçalho e não utilizava a cadeia final da memória ELS. Foram corrigidas as apresentações sem modificar os modelos resistentes. A memória passa a usar todas as combinações calculadas, inclui os critérios e seleções e conserva os governantes por regime. Valores de flecha não validada ficam substituídos por uma indicação de insuficiência.
+
+Dois testes verificam localizações por nó/coordenada, ausência de flechas numéricas não validadas e rastreabilidade das combinações características. O ensaio Windows e o ensaio do executável verificam também a aplicação do ícone. Os dados e o PDF do utilizador não são distribuídos.
+
+O ícone foi gerado a partir da capa pública do repositório (paleta escura, betão, armaduras e laranja) e convertido para PNG/ICO multirresolução para a aplicação. O resultado não constitui um pormenor construtivo.

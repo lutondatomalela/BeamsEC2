@@ -49,6 +49,8 @@ class WindowsGroupTests(unittest.TestCase):
                 self.assertEqual(app.df_results.service_combination_steel.iloc[0],'304 (C)')
                 self.assertEqual(app.df_results.service_status.iloc[0],'Dados insuficientes')
                 self.assertFalse(app._calculation_running)
+                self.assertTrue(app.iconbitmap())
+                self.assertTrue(hasattr(app,'_program_icon'))
                 self.assertTrue(app.df_clean.station.isna().all())
                 groups=app.df_combination_groups.set_index('case').combination_group
                 self.assertEqual(groups['201 (C) (CQC)'],'ELU')

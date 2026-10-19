@@ -1,3 +1,12 @@
+# v0.1.3-dev2 — ícone e rastreabilidade dos relatórios
+
+- Ícone da janela e do executável baseado na capa do repositório, com ficheiros PNG/ICO em assets.
+- As localizações por nó deixam de ser apresentadas como distâncias em metros.
+- Cabeçalhos distinguem envelopes ELU, barras e estados OK/Falha/Verificar.
+- Memória de cálculo inclui critérios, seleções e governantes ELS, usando todas as combinações calculadas em vez do resumo por barra.
+- Valores de flecha não validada deixam de ser apresentados como resultados numéricos na memória; o motivo da insuficiência fica explícito.
+- Alterações de apresentação e rastreabilidade, sem alteração dos modelos resistentes nesta etapa.
+
 # v0.1.3-dev1 — distribuição de teste
 
 - Reutilização local de verificações ELS com secção/armadura e parâmetros iguais, sem alterar resultados por combinação ELU.

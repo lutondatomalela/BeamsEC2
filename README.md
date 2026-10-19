@@ -186,3 +186,9 @@ A distribuição portátil desta etapa contém o executável, a tabela-tipo e a 
 O programa reutiliza verificações ELS apenas para dados de secção/armadura iguais na mesma análise. As tabelas ELS relacionam-se com os resultados ELU através de `service_cage_id`. Cada alteração de dados ou parâmetros inicia uma nova análise, sem reutilização de resultados anteriores. A pormenorização usa os grupos ELU selecionados e é calculada uma vez por solução distinta; um diagrama incompleto conserva as indicações de amarração, mas não origina perfis de dispensas.
 
 Esta é uma distribuição de teste. As limitações do motor original documentadas em `docs/RESTART_VALIDATION.md` continuam aplicáveis.
+
+### Ícone e relatórios — v0.1.3-dev2
+
+O ícone em `assets/beamsec2.ico` é incorporado no executável; `assets/beamsec2.png` identifica a janela. Ambos se baseiam na identidade da capa do repositório. A distribuição não requer ficheiros de imagem externos.
+
+A memória distingue nós de distâncias em metros, inclui seleções e governantes ELS e documenta todas as combinações efetivamente calculadas. O cabeçalho inclui os estados Verificar. Uma flecha sem dados suficientes aparece como não verificada, sem apresentar o valor estimado como resultado validado.

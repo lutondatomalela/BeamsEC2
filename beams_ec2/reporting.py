@@ -120,17 +120,17 @@ def _calc_memory_df_reporting(results: pd.DataFrame) -> pd.DataFrame:
             rows.append({**base, "Etapa": etapa, "Item": item, "Valor": valor, "Unidade": unidade, "Critério/Referência": criterio, "Estado/Nota": nota})
         add("Dados", "Material", r.get("material", ""), "-", "NP EN 1992-1-1, Secção 3", r.get("material_source", ""))
         add("Dados", "Comprimento", finite(r.get("length_m")), "m", "entrada")
-        add("Esforços", "M+Ed", finite(r.get("m_pos_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('m_pos_at'))} m")
-        add("Esforços", "M-Ed", finite(r.get("m_neg_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('m_neg_at'))} m")
-        add("Esforços", "VEd", finite(r.get("v_ed_kN")), "kN", "envelope", f"x={_fmt_report_base(r.get('v_at'))} m")
-        add("Esforços", "TEd", finite(r.get("t_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('t_at'))} m")
+        add("Esforços", "M+Ed", finite(r.get("m_pos_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('m_pos_at')))
+        add("Esforços", "M-Ed", finite(r.get("m_neg_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('m_neg_at')))
+        add("Esforços", "VEd", finite(r.get("v_ed_kN")), "kN", "envelope", _force_location_report(r.get('v_at')))
+        add("Esforços", "TEd", finite(r.get("t_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('t_at')))
         add("Flexão +", "As,req / As,prov", f"{_fmt_report_base(r.get('as_req_bot_mm2'),0)} / {_fmt_report_base(r.get('as_prov_bot_mm2'),0)}", "mm²", "NP EN 1992-1-1, 6.1 / 9.2", f"{r.get('bot_rebar','')}; MRd={_fmt_report_base(r.get('mrd_pos_kNm'))} kNm; η={_fmt_report_base(r.get('eta_m_pos'),3)}")
         add("Flexão -", "As,req / As,prov", f"{_fmt_report_base(r.get('as_req_top_mm2'),0)} / {_fmt_report_base(r.get('as_prov_top_mm2'),0)}", "mm²", "NP EN 1992-1-1, 6.1 / 9.2", f"{r.get('top_rebar','')}; MRd={_fmt_report_base(r.get('mrd_neg_kNm'))} kNm; η={_fmt_report_base(r.get('eta_m_neg'),3)}")
         add("Corte", "VRd,c / VRd,max", f"{_fmt_report_base(r.get('VRd_c_kN'))} / {_fmt_report_base(r.get('VRd_max_kN'))}", "kN", "NP EN 1992-1-1, 6.2", r.get("shear_status", ""))
         add("Torção", "TEd / TRd,max", f"{_fmt_report_base(r.get('t_ed_kNm'))} / {_fmt_report_base(r.get('TRd_max_kNm'))}", "kNm", "NP EN 1992-1-1, 6.3", r.get("torsion_status", ""))
         add("Corte/Torção", "Asw/s req / prov", f"{_fmt_report_base(r.get('Asw_s_total_req_mm2_per_m'),0)} / {_fmt_report_base(r.get('Asw_s_prov_mm2_per_m'),0)}", "mm²/m", "NP EN 1992-1-1, 6.2 + 6.3")
         add("ELS", "wk", f"{_fmt_report_base(r.get('service_wk_est_mm'),3)} / {_fmt_report_base(r.get('service_wk_lim_mm'),3)}", "mm", "NP EN 1992-1-1, 7.3", r.get("service_crack_status", ""))
-        add("ELS", "Flecha estimada / limite", f"{_fmt_report_base(r.get('service_deflection_est_mm'),2)} / {_fmt_report_base(r.get('service_deflection_lim_mm'),2)}", "mm", f"{r.get('service_deflection_limit','L/250')}", r.get("service_deflection_status", ""))
+        add("ELS", "Flecha estimada / limite", _service_value_report(r, 'service_deflection_est_mm', 'service_deflection_lim_mm', 'service_deflection_status'), "mm", f"{r.get('service_deflection_limit','L/250')}", r.get("service_deflection_status", ""))
         add("Pormenorização", "Solução", r.get("solution", ""), "-", "NP EN 1992-1-1, Secções 8 e 9.2", r.get("detailing_status", ""))
         add("Resultado", "Estado final", r.get("status", ""), "-", "síntese", r.get("failure_reason", "") or r.get("recommendations", ""))
     return pd.DataFrame(rows)
@@ -423,7 +423,7 @@ def _write_pdf_reporting(self, path: str):
     meta = [
         ["Programa", APP_NAME, "Tipo de relatório", scope],
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes ELU / Barras", f"{n_total} / {results['member'].nunique() if 'member' in results else 0}", "OK / Falha / Verificar", f"{n_ok} / {n_fail} / {int((results.get('status', pd.Series(dtype=str)) == 'Verificar').sum())}"],
         ["Diâmetros principais", "Ø12, Ø16, Ø20, Ø25", "Torção", f"ηT >= {TORSION_RELEVANCE_ETA_Detailing:.2f}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm]); t.setStyle(self._pdf_table_style(header=False)); story += [t, Spacer(1, 5*mm)]
@@ -1202,7 +1202,7 @@ def _write_pdf_calculation(self, path: str):
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes ELU / Barras", f"{n_total} / {results['member'].nunique() if 'member' in results else 0}", "OK / Falha / Verificar", f"{n_ok} / {n_fail} / {int((results.get('status', pd.Series(dtype=str)) == 'Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1471,6 +1471,21 @@ def _beam_label_labels(row) -> str:
 globals()["_beam_label_calculation"] = _beam_label_labels
 
 
+def _force_location_report(value):
+    text=str(value or '').strip()
+    if not text or text.lower() in {'nan','none'}:
+        return 'posição não disponível'
+    if text.startswith('Nó ') or text == 'posição não disponível':
+        return text
+    return f"x={_fmt_report_base(value)} m"
+
+
+def _service_value_report(row, value, limit, status, decimals=2):
+    if row.get(status) == 'Dados insuficientes':
+        return f"-- / {_fmt_report_base(row.get(limit),decimals)}"
+    return f"{_fmt_report_base(row.get(value),decimals)} / {_fmt_report_base(row.get(limit),decimals)}"
+
+
 def _calc_memory_df_labels(results: pd.DataFrame) -> pd.DataFrame:
     cols = ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"]
     rows = []
@@ -1487,17 +1502,17 @@ def _calc_memory_df_labels(results: pd.DataFrame) -> pd.DataFrame:
             rows.append({**base, "Etapa": etapa, "Item": item, "Valor": valor, "Unidade": unidade, "Critério/Referência": criterio, "Estado/Nota": nota})
         add("Dados", "Material", r.get("material", ""), "-", "NP EN 1992-1-1, Secção 3", r.get("material_source", ""))
         add("Dados", "Comprimento", finite(r.get("length_m")), "m", "entrada")
-        add("Esforços", "M+Ed", finite(r.get("m_pos_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('m_pos_at'))} m")
-        add("Esforços", "M-Ed", finite(r.get("m_neg_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('m_neg_at'))} m")
-        add("Esforços", "VEd", finite(r.get("v_ed_kN")), "kN", "envelope", f"x={_fmt_report_base(r.get('v_at'))} m")
-        add("Esforços", "TEd", finite(r.get("t_ed_kNm")), "kNm", "envelope", f"x={_fmt_report_base(r.get('t_at'))} m")
+        add("Esforços", "M+Ed", finite(r.get("m_pos_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('m_pos_at')))
+        add("Esforços", "M-Ed", finite(r.get("m_neg_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('m_neg_at')))
+        add("Esforços", "VEd", finite(r.get("v_ed_kN")), "kN", "envelope", _force_location_report(r.get('v_at')))
+        add("Esforços", "TEd", finite(r.get("t_ed_kNm")), "kNm", "envelope", _force_location_report(r.get('t_at')))
         add("Flexão +", "As,req / As,prov", f"{_fmt_report_base(r.get('as_req_bot_mm2'),0)} / {_fmt_report_base(r.get('as_prov_bot_mm2'),0)}", "mm²", "NP EN 1992-1-1, 6.1 / 9.2", f"{r.get('bot_rebar','')}; MRd={_fmt_report_base(r.get('mrd_pos_kNm'))} kNm; η={_fmt_report_base(r.get('eta_m_pos'),3)}")
         add("Flexão -", "As,req / As,prov", f"{_fmt_report_base(r.get('as_req_top_mm2'),0)} / {_fmt_report_base(r.get('as_prov_top_mm2'),0)}", "mm²", "NP EN 1992-1-1, 6.1 / 9.2", f"{r.get('top_rebar','')}; MRd={_fmt_report_base(r.get('mrd_neg_kNm'))} kNm; η={_fmt_report_base(r.get('eta_m_neg'),3)}")
         add("Corte", "VRd,c / VRd,max", f"{_fmt_report_base(r.get('VRd_c_kN'))} / {_fmt_report_base(r.get('VRd_max_kN'))}", "kN", "NP EN 1992-1-1, 6.2", r.get("shear_status", ""))
         add("Torção", "TEd / TRd,max", f"{_fmt_report_base(r.get('t_ed_kNm'))} / {_fmt_report_base(r.get('TRd_max_kNm'))}", "kNm", "NP EN 1992-1-1, 6.3", r.get("torsion_status", ""))
         add("Corte/Torção", "Asw/s req / prov", f"{_fmt_report_base(r.get('Asw_s_total_req_mm2_per_m'),0)} / {_fmt_report_base(r.get('Asw_s_prov_mm2_per_m'),0)}", "mm²/m", "NP EN 1992-1-1, 6.2 + 6.3")
         add("ELS", "wk", f"{_fmt_report_base(r.get('service_wk_est_mm'),3)} / {_fmt_report_base(r.get('service_wk_lim_mm'),3)}", "mm", "NP EN 1992-1-1, 7.3", r.get("service_crack_status", ""))
-        add("ELS", "Flecha estimada / limite", f"{_fmt_report_base(r.get('service_deflection_est_mm'),2)} / {_fmt_report_base(r.get('service_deflection_lim_mm'),2)}", "mm", f"{r.get('service_deflection_limit','L/250')}", r.get("service_deflection_status", ""))
+        add("ELS", "Flecha estimada / limite", _service_value_report(r, 'service_deflection_est_mm', 'service_deflection_lim_mm', 'service_deflection_status'), "mm", f"{r.get('service_deflection_limit','L/250')}", r.get("service_deflection_status", ""))
         add("Pormenorização", "Solução", r.get("solution", ""), "-", "NP EN 1992-1-1, Secções 8 e 9.2", r.get("detailing_status", ""))
         add("Resultado", "Estado final", r.get("status", ""), "-", "síntese", r.get("failure_reason", "") or r.get("recommendations", ""))
     return pd.DataFrame(rows, columns=cols)
@@ -1609,11 +1624,13 @@ def _write_pdf_full_reports(self, path: str):
     n_total = len(results)
     n_ok = int((results["status"] == "OK").sum()) if "status" in results.columns else 0
     n_fail = int((results["status"] == "Falha").sum()) if "status" in results.columns else 0
+    n_check = int((results["status"] == "Verificar").sum()) if "status" in results.columns else 0
+    n_members = results['member'].nunique() if 'member' in results else 0
 
     story.append(_program_link_pdf_reporting(styles))
     meta = [
         ["Data", datetime.now().strftime("%Y-%m-%d %H:%M"), "Suporte normativo", "NP EN 1992-1-1:2010"],
-        ["Envelopes", str(n_total), "OK/Falhas", f"{n_ok}/{n_fail}"],
+        ["Envelopes ELU / Barras", f"{n_total} / {results['member'].nunique() if 'member' in results else 0}", "OK / Falha / Verificar", f"{n_ok} / {n_fail} / {int((results.get('status', pd.Series(dtype=str)) == 'Verificar').sum())}"],
     ]
     t = Table(meta, colWidths=[38*mm, 90*mm, 38*mm, 105*mm])
     t.setStyle(self._pdf_table_style(header=False))
@@ -1661,8 +1678,12 @@ def _write_pdf_full_reports(self, path: str):
             ])
 
     elif scope == "Memória de cálculo":
-        mem = _calc_memory_df_labels(summary)
+        # Use the final advanced memory function, including regime provenance.
+        mem = self._memory_for_report(results)
         story.extend([
+            Paragraph("Critérios e grupos da análise", styles["BodyCourier"]),
+            self._pdf_df_table(self._parameters_df(), ["Parâmetro", "Valor"], max_rows=None, widths=[90,180]),
+            Spacer(1, 5*mm),
             Paragraph("Memória de cálculo", styles["Section"]),
             self._pdf_df_table(mem, ["Viga", "Caso", "Piso", "Secção", "Etapa", "Item", "Valor", "Unidade", "Critério/Referência", "Estado/Nota"], max_rows=None),
         ])

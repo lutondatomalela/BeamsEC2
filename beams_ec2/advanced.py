@@ -1203,7 +1203,19 @@ BeamsEC2App._write_excel = _write_excel_advanced
 _calc_memory_advanced_base = _calc_memory_df_serviceability
 
 def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
-    base = _calc_memory_advanced_base(results)
+    base = _calc_memory_advanced_base(results).copy()
+    # Normalize values once at the final memory boundary, regardless of legacy wrappers.
+    from .reporting import _force_location_report
+    if results is not None and not results.empty and not base.empty:
+        for _, result in results.iterrows():
+            selected = (base['Viga'].astype(str) == str(_beam_label_labels(result))) & (base['Caso'].astype(str) == str(result.get('case','')))
+            for item, key in [('M+Ed','m_pos_at'),('M-Ed','m_neg_at'),('VEd','v_at'),('TEd','t_at')]:
+                mask = selected & base['Etapa'].eq('Esforços') & base['Item'].eq(item)
+                base.loc[mask,'Estado/Nota'] = _force_location_report(result.get(key))
+            if result.get('service_deflection_status') == 'Dados insuficientes':
+                mask = selected & base['Item'].astype(str).str.contains('Flecha',case=False)
+                base.loc[mask,'Valor'] = 'Não verificada'
+                base.loc[mask,'Estado/Nota'] = 'Dados insuficientes: ' + str(result.get('service_diagram_source','diagrama não validado'))
     rows = []
     if results is not None and not results.empty:
         for _, r in results.iterrows():
@@ -1211,9 +1223,13 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
             rows.extend([
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},
+                {**common, "Etapa": "ELS envelope", "Item": "Governantes tensões aço / betão", "Valor": f"{r.get('service_combination_steel','')} / {r.get('service_combination_concrete','')}", "Unidade": "-", "Critério/Referência": "7.2; característica", "Estado/Nota": r.get('service_stress_status','')},
+                {**common, "Etapa": "ELS envelope", "Item": "Fluência linear QP", "Valor": r.get('service_combination_creep',''), "Unidade": "-", "Critério/Referência": "7.2(3)", "Estado/Nota": r.get('service_creep_status','')},
                 {**common, "Etapa": "Pormenorização", "Item": "Armadura ELS ao longo do vão", "Valor": r.get("service_reinforcement_model", ""), "Unidade": "-", "Critério/Referência": "Modelo de rigidez", "Estado/Nota": ""},
             ])
     return pd.concat([base, pd.DataFrame(rows)], ignore_index=True) if rows else base
+
+BeamsEC2App._memory_for_report = staticmethod(_calc_memory_df_advanced)
 
 globals()["_calc_memory_df_serviceability"] = _calc_memory_df_advanced
 globals()["_calc_memory_df_geometry"] = _calc_memory_df_advanced
@@ -1318,7 +1334,9 @@ def _write_pdf_advanced(self, path: str):
     doc.title = APP_NAME; doc.author = ""; doc.subject = APP_SUBJECT
     story = [_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    n_check=int((results.get('status',pd.Series(dtype=str))=='Verificar').sum())
+    n_members=results['member'].nunique() if 'member' in results else 0
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes ELU / Barras",f"{n_total} / {n_members}","OK / Falha / Verificar",f"{n_ok} / {n_fail} / {n_check}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False))
     story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom

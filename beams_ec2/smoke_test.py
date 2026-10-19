@@ -13,6 +13,8 @@ def run_smoke_test(directory):
         import xlrd
         from .release import BeamsEC2App,APP_VERSION,read_table_file
         app=BeamsEC2App();app.withdraw()
+        if not app.iconbitmap() or not hasattr(app,'_program_icon'):
+            raise RuntimeError('Application icon not applied')
         failures=[];completed=[]
         def fail(*args,**kwargs):
             failures.append(str(args));app.quit()
@@ -55,7 +57,7 @@ def run_smoke_test(directory):
                 app.var_pdf_scope.set(scope);pdf=output/f'{name}.pdf';app._write_pdf(str(pdf))
                 if pdf.stat().st_size<1000 or not pdf.read_bytes().startswith(b'%PDF-'):
                     raise RuntimeError('Invalid PDF: '+name)
-        result={'ok':True,'version':APP_VERSION,'checks':['Tk','XLSX import','xlrd available',
+        result={'ok':True,'version':APP_VERSION,'checks':['Tk','Windows icon','XLSX import','xlrd available',
                 'node-only input','ELU CQC','ELS CAR/FREQ/QP','excluded case',
                 'missing deflection diagram','XLSX export','three PDF exports']}
     except Exception:
