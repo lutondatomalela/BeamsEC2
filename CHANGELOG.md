@@ -1,3 +1,13 @@
+# Desenvolvimento — grupos ELS explícitos
+
+- Campos separados para ELS característica, frequente e quase-permanente, mantendo o modo anterior com os campos vazios.
+- Seleção explícita prevalece sobre os nomes e exclui casos não classificados; CQC deixa de ser uma indicação de regime quase-permanente.
+- Governantes por regime: tensões CAR, fissuração/flecha QP e frequentes informativos.
+- Controlo QP da hipótese de fluência linear separado da falha resistente; falta de grupos e verificações incompletas mantida no estado global.
+- Auditoria da classificação no XLSX, seleções conservadas durante a análise e bloqueio de análises simultâneas.
+- No modo explícito, flechas com posições inferidas não recebem OK. A importação por nós e os métodos originais de secção mantêm-se.
+- Testes de seleção e regime e ensaio Windows com cálculo e exportações por nós sem Station.
+
 # Desenvolvimento — reinício a partir da v0.1.2
 
 - Seleção opcional de combinações ELU por listas e intervalos; seleção ELS com correspondência exata.

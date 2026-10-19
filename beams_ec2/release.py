@@ -96,15 +96,20 @@ def _build_sidebar_clean(self, parent):
 
     sls = ttk.LabelFrame(parent, text="3. Estados-limite de serviço")
     sls.pack(fill="x", pady=(0, 8))
-    ttk.Label(sls, text="Combinações ELS").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-    ttk.Entry(sls, textvariable=self.var_service_case).grid(row=0, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Checkbutton(sls, text="Reconhecer automaticamente o regime", variable=self.var_service_auto_regime).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Regime base").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_service_regime, values=["Quase-permanente / longo prazo", "Frequente / repetida", "Característica / curta duração"], state="readonly").grid(row=2, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Label(sls, text="Condição de apoio").grid(row=3, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_support_condition, values=["Automática / por tabela", "Entre apoios (y0=yL=0)", "Consola - encastrada à esquerda", "Consola - encastrada à direita", "Encastre-encastre"], state="readonly").grid(row=3, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Label(sls, text="Histórico").grid(row=4, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_history_mode, values=["Duas fases G+Q", "Uma idade efectiva"], state="readonly").grid(row=4, column=1, sticky="ew", padx=6, pady=4)
+    for row, label, variable in [(0, "ELS característica", self.var_sls_char_cases),
+                                  (1, "ELS frequente", self.var_sls_freq_cases),
+                                  (2, "ELS quase-permanente", self.var_sls_qp_cases)]:
+        ttk.Label(sls, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(sls, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="ELS (modo anterior)").grid(row=3, column=0, sticky="w", padx=6, pady=4)
+    ttk.Entry(sls, textvariable=self.var_service_case).grid(row=3, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Checkbutton(sls, text="Reconhecer automaticamente o regime", variable=self.var_service_auto_regime).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    ttk.Label(sls, text="Regime base").grid(row=5, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_service_regime, values=["Quase-permanente / longo prazo", "Frequente / repetida", "Característica / curta duração"], state="readonly").grid(row=5, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="Condição de apoio").grid(row=6, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_support_condition, values=["Automática / por tabela", "Entre apoios (y0=yL=0)", "Consola - encastrada à esquerda", "Consola - encastrada à direita", "Encastre-encastre"], state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="Histórico").grid(row=7, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_history_mode, values=["Duas fases G+Q", "Uma idade efectiva"], state="readonly").grid(row=7, column=1, sticky="ew", padx=6, pady=4)
     self._add_label_entry(sls, "Fração permanente [%]", self.var_permanent_fraction, 5)
     self._add_label_entry(sls, "t0,G [d]", self.var_t0_permanent, 6)
     self._add_label_entry(sls, "t0,Q [d]", self.var_t0_variable, 7)
@@ -112,11 +117,11 @@ def _build_sidebar_clean(self, parent):
     self._add_label_entry(sls, "t0 efectivo [d]", self.var_service_t0, 9)
     self._add_label_entry(sls, "Idade final t [d]", self.var_service_t, 10)
     self._add_label_entry(sls, "Início da secagem ts [d]", self.var_service_ts, 11)
-    ttk.Label(sls, text="Classe de cimento").grid(row=12, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_service_cement, values=["S", "N", "R"], state="readonly", width=8).grid(row=12, column=1, sticky="ew", padx=6, pady=4)
+    ttk.Label(sls, text="Classe de cimento").grid(row=15, column=0, sticky="w", padx=6, pady=4)
+    ttk.Combobox(sls, textvariable=self.var_service_cement, values=["S", "N", "R"], state="readonly", width=8).grid(row=15, column=1, sticky="ew", padx=6, pady=4)
     self._add_label_entry(sls, "h0 [mm] (0=automático)", self.var_service_h0, 13)
-    ttk.Checkbutton(sls, text="Considerar retracção", variable=self.var_service_shrinkage).grid(row=14, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Campo vazio: verifica todas as combinações ELS reconhecidas. Várias combinações podem ser separadas por ponto e vírgula.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=15, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+    ttk.Checkbutton(sls, text="Considerar retracção", variable=self.var_service_shrinkage).grid(row=17, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    ttk.Label(sls, text="Grupos preenchidos: indique também ELU; casos não classificados ficam excluídos. Use listas/intervalos. Grupos vazios: mantém-se o modo anterior.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=18, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
     sls.columnconfigure(1, weight=1)
 
     filters = ttk.LabelFrame(parent, text="4. Filtros")
@@ -221,6 +226,9 @@ def _load_df_clean(self, df: pd.DataFrame, source: str = ""):
         shear_axis=self.var_shear_axis.get().lower(),
         torsion_axis=self.var_torsion_axis.get().lower(),
     )
+    self.df_combination_groups = pd.DataFrame()
+    self._group_texts_for_run = None
+    self._selected_sls_groups = None
     self.df_calc_input = pd.DataFrame()
     self.df_results = pd.DataFrame()
     self.df_summary = pd.DataFrame()

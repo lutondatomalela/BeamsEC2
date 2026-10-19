@@ -166,3 +166,15 @@ O campo opcional **Combinações ELU** aceita listas e intervalos, por exemplo `
 Uma combinação explicitamente selecionada como ELS deixa de entrar no cálculo ELU. Sobreposições explícitas entre os dois grupos e números inexistentes são recusados antes de iniciar o cálculo. Com o campo ELU vazio, mantém-se a seleção original por nome, excluindo também os ELS indicados. Com o campo ELS vazio, mantém-se o reconhecimento original pelo nome; para combinações apenas numéricas, indique os grupos explicitamente.
 
 A importação por nós continua disponível sem `Station`. A identificação `Member/Point (m)/Case` também é aceite, preservando rótulos como `+/- MY x=...`. Neste passo, estes rótulos são tratados como identificadores: não são convertidos em coordenadas. Os métodos de cálculo e as hipóteses ELS da versão original mantêm-se e serão objeto de validação própria.
+
+### Grupos explícitos ELS
+
+Os campos **ELS característica**, **ELS frequente** e **ELS quase-permanente** ativam o modo explícito quando pelo menos um é preenchido. Neste modo, preencha também **Combinações ELU** e deixe vazio **ELS (modo anterior)**. Cada grupo aceita listas/intervalos. Os casos sem grupo ficam excluídos e a mesma combinação não pode pertencer a dois grupos. `CQC` não determina um regime ELS.
+
+- Característica: verificações das tensões no aço e no betão.
+- Quase-permanente: fissuração, flecha final e controlo da hipótese de fluência linear.
+- Frequente: valores informativos, sem governar os critérios anteriores.
+
+Sem resultados CAR ou QP, o ELS global fica incompleto. A tensão QP acima do limite de fluência linear pede revisão do modelo de fluência; não equivale, por si só, a falha resistente. A folha **11B_Grupos_Combinacoes** regista também os casos excluídos; **11C_ELS_Combinacoes** conserva os resultados por grupo e combinação.
+
+A importação por nós continua aceite. No modo explícito, a flecha calculada com posições inferidas pela ordem das linhas, normalizadas ou ajustadas ao vão fica como **Dados insuficientes**, sem impedir as restantes verificações disponíveis. Os métodos originais de secção mantêm-se nesta etapa. Deixar os três novos campos vazios mantém o modo anterior, com as limitações já documentadas.

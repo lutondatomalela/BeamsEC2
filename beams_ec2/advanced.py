@@ -78,7 +78,7 @@ class SLSParametersAdvanced(SLSParametersServiceability):
 
 def _case_regime_advanced(case_value, fallback: str) -> str:
     s = normalize_text(str(case_value or ""))
-    if any(k in s for k in ["quase", "cqc", "q.p", " qp", "qp "]):
+    if any(k in s for k in ["quase", "q.p", " qp", "qp "]):
         return "Quase-permanente / longo prazo"
     if any(k in s for k in ["frequente", "freq", "repetida", "repet"]):
         return "Frequente / repetida"
@@ -217,8 +217,15 @@ def _service_groups_advanced(app, r: pd.Series, target: str):
             cand = same
     if cand.empty:
         return [], "viga não encontrada"
-    from .case_selection import select_labels
-    selected = select_labels(cand['case'], target, validate_missing=False)
+    from .sls_groups import selections, resolve, REGIMES
+    mapping = getattr(app, '_selected_sls_groups', None)
+    if mapping is None:
+        mapping = resolve(df['case'], getattr(app, '_group_texts_for_run', None) or selections(app))
+    if mapping is not None:
+        selected = {case for case, group in mapping.items() if group in REGIMES}
+    else:
+        from .case_selection import select_labels
+        selected = select_labels(cand['case'], target, validate_missing=False)
     els = cand[cand['case'].astype(str).isin(selected)]
     return [(str(case), grp.copy()) for case, grp in els.groupby('case', dropna=False, sort=False)], "seleção ELS" if str(target or '').strip() else "ELS reconhecidos pelo nome"
 
@@ -544,6 +551,11 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     out = results.copy()
     target = app.var_service_case.get().strip() if hasattr(app, "var_service_case") else ""
     base_params = _sls_params_from_app_advanced(app)
+    from .sls_groups import resolve, selections
+    texts = getattr(app, '_group_texts_for_run', None)
+    if texts is None:
+        texts = selections(app)
+    app._selected_sls_groups = resolve(app.df_clean['case'], texts)
     all_points = []
     all_combos = []
     for idx, r in out.iterrows():
@@ -558,15 +570,23 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             continue
         member_items = []
         for case_label, group in groups:
-            params = _params_for_case_advanced(base_params, case_label)
+            from .sls_groups import parameters, policy
+            group_name = (getattr(app, '_selected_sls_groups', None) or {}).get(case_label)
+            params = parameters(base_params, group_name) if group_name else _params_for_case_advanced(base_params, case_label)
             sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+            if group_name:
+                sls = policy(sls, group_name)
+                for point in points:
+                    point['service_group'] = group_name
+                    point['service_regime'] = params.regime
             member_items.append(sls)
             all_points.extend(points)
             all_combos.append({
                 "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
                 **sls,
             })
-        governing = _governing_sls_advanced(member_items)
+        from .sls_groups import envelope
+        governing = envelope(member_items) if getattr(app, '_selected_sls_groups', None) is not None else _governing_sls_advanced(member_items)
         for k, v in governing.items():
             out.at[idx, k] = v
         current = str(out.at[idx, "status"] if "status" in out.columns else "OK")
@@ -580,6 +600,7 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     app.df_sls_points = pd.DataFrame(all_points)
     app.df_sls_combinations = pd.DataFrame(all_combos)
     app.df_sls_parameters = pd.DataFrame([
+        *[[group, text] for group, text in texts.items()],
         ["Regime base", base_params.regime], ["Regime automático", "Sim" if base_params.auto_regime else "Não"],
         ["Combinações ELS", target or "todas as reconhecidas"], ["Condição de apoio", base_params.support_condition],
         ["Histórico de carregamento", base_params.history_mode], ["Fração permanente [%]", base_params.permanent_fraction_pct],
@@ -607,7 +628,8 @@ def _sls_audit_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         "service_wk_est_mm", "service_wk_lim_mm", "service_deflection_instant_mm",
         "service_deflection_final_mm", "service_deflection_est_mm", "service_deflection_lim_mm",
         "service_deflection_limit", "service_crack_status", "service_deflection_status",
-        "service_concrete_status", "service_stress_status", "service_status", "service_note",
+        "service_concrete_status", "service_stress_status", "service_creep_status",
+        "service_combination_creep", "service_status", "service_note",
     ]
     if results is None or results.empty:
         return pd.DataFrame()
@@ -820,6 +842,9 @@ def _internal_tests_advanced() -> pd.DataFrame:
 def _ensure_sls_vars_advanced(self):
     _ensure_sls_vars_serviceability(self)
     defaults = {
+        "var_sls_char_cases": (tk.StringVar, ""),
+        "var_sls_freq_cases": (tk.StringVar, ""),
+        "var_sls_qp_cases": (tk.StringVar, ""),
         "var_elu_cases": (tk.StringVar, ""),
         "var_service_auto_regime": (tk.BooleanVar, True),
         "var_support_condition": (tk.StringVar, "Automática / por tabela"),
@@ -988,6 +1013,8 @@ BeamsEC2App.validate_inputs = _validate_inputs_advanced
 _run_design_serviceability_base = BeamsEC2App.run_design
 
 def _run_design_advanced(self):
+    if getattr(self, '_calculation_running', False):
+        return
     _ensure_sls_vars_advanced(self)
     self.var_agg.set(f"{DEFAULT_AGGREGATE_MM_Reporting:.0f}")
     self.var_gamma_c.set(f"{DEFAULT_GAMMA_C_Reporting:.2f}")
@@ -1003,10 +1030,25 @@ def _run_design_advanced(self):
     )
     from .case_selection import select_elu_frame
     try:
-        elu_env = select_elu_frame(self.df_env, self.var_elu_cases.get(), self.var_service_case.get())
+        from .sls_groups import resolve, selections
+        group_texts = selections(self)
+        selected_groups = resolve(self.df_env['case'], group_texts)
+        if selected_groups is None:
+            elu_env = select_elu_frame(self.df_env, self.var_elu_cases.get(), self.var_service_case.get())
+        else:
+            if self.var_service_case.get().strip():
+                raise ValueError('Utilize os grupos ELS ou o campo anterior, sem misturar os dois modos.')
+            elu_env = self.df_env[self.df_env['case'].astype(str).map(selected_groups).eq('ELU')].copy()
+            if elu_env.empty:
+                raise ValueError('Indique as combinações ELU no modo de grupos explícitos.')
+            elu_env['limit_state'] = 'ELU'
+        self.df_combination_groups = pd.DataFrame([
+            {'case':case, 'combination_group':group} for case, group in (selected_groups or {}).items()])
     except ValueError as exc:
         messagebox.showwarning("Seleção de combinações", str(exc))
         return
+    self._group_texts_for_run = group_texts
+    self._calculation_running = True
     input_df = reduce_to_governing_cases(elu_env) if self.var_reduce_cases.get() else elu_env
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
     def progress(done, total):
@@ -1031,6 +1073,7 @@ def _run_design_advanced(self):
                 internal = internal.rename(columns={"Teste": "Verificação", "Estado": "Resultado"})
                 validation = pd.concat([validation, internal], ignore_index=True, sort=False)
             def finish():
+                self._calculation_running = False
                 self.df_results=results; self.df_summary=summary; self.df_failures=failures; self.df_ok=ok
                 self.df_validation=validation; self.df_notes=build_normative_notes(); self.df_filtered=pd.DataFrame()
                 self.show_df(self.tree_results,self.df_results); self.show_df(self.tree_summary,self.df_summary)
@@ -1042,6 +1085,7 @@ def _run_design_advanced(self):
                 self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; testes internos com {n_tests_fail} falhas.")
             self.after(0, finish)
         except Exception as exc:
+            self.after(0, lambda: setattr(self, '_calculation_running', False))
             msg=str(exc); self.after(0,lambda m=msg:messagebox.showerror("Erro",m)); self.after(0,lambda:self.status_var.set("Falha na análise.")); self.after(0,lambda:self.progress_var.set(0.0))
     threading.Thread(target=worker,daemon=True).start()
 
@@ -1052,9 +1096,11 @@ BeamsEC2App.run_design = _run_design_advanced
 _parameters_df_advanced_base = BeamsEC2App._parameters_df
 
 def _parameters_df_advanced(self):
+    from .sls_groups import selections
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
     extra = pd.DataFrame([
+        *[[group, text] for group, text in (getattr(self, '_group_texts_for_run', None) or selections(self)).items()],
         ["Seleção ELU", self.var_elu_cases.get().strip() if hasattr(self, 'var_elu_cases') and self.var_elu_cases.get().strip() else "Regra original, excluindo ELS selecionados"],
         ["Envelope ELS", "todas as combinações reconhecidas" if not self.var_service_case.get().strip() else self.var_service_case.get().strip()],
         ["Regime automático", "Sim" if p.auto_regime else "Não"], ["Condição de apoio", p.support_condition],
@@ -1077,6 +1123,7 @@ def _write_excel_advanced(self, path: str):
         from openpyxl.utils import get_column_letter
         wb = load_workbook(path)
         datasets = [
+            ("11B_Grupos_Combinacoes", getattr(self, "df_combination_groups", pd.DataFrame())),
             ("11C_ELS_Combinacoes", getattr(self, "df_sls_combinations", pd.DataFrame())),
             ("12A_Porm_Longitudinal", getattr(self, "df_longitudinal_detailing", pd.DataFrame())),
             ("12B_Perfil_Armadura", getattr(self, "df_longitudinal_profile", pd.DataFrame())),
