@@ -319,22 +319,28 @@ BeamsEC2App._pdf_table_style = _pdf_table_style_report_base
 
 
 def _pdf_df_table_report_base(self, df: pd.DataFrame, cols: List[str], max_rows: int = 30, widths=None):
-    from reportlab.platypus import Table, Paragraph
+    from reportlab.platypus import LongTable, Paragraph
     from reportlab.lib.units import mm
     styles = _pdf_styles_report_base(); pstyle = styles["Cell"]
     if df is None or df.empty: return Paragraph("Sem dados.", styles["Small"])
     present = [c for c in cols if c in df.columns]
     if not present: return Paragraph("Sem colunas aplicáveis.", styles["Small"])
     data = [[Paragraph(str(c), pstyle) for c in present]]
-    for _, r in df.head(max_rows).iterrows():
-        row=[]
-        for c in present:
-            txt = _fmt_report_base(r.get(c, ""), 2).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            row.append(Paragraph(txt, pstyle))
+    # Repeated criteria, labels and units share layout objects within each column.
+    # Column-specific caches ensure a Paragraph is never reused at another width.
+    cache = [{} for _ in present]
+    for values in df.head(max_rows)[present].itertuples(index=False, name=None):
+        row = []
+        for j, value in enumerate(values):
+            txt = _fmt_report_base(value, 2).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            paragraph = cache[j].get(txt)
+            if paragraph is None:
+                paragraph = cache[j][txt] = Paragraph(txt, pstyle)
+            row.append(paragraph)
         data.append(row)
     total_width = 270*mm
     col_widths = [w*mm for w in widths] if widths and len(widths) == len(present) else [total_width/max(1,len(present))]*max(1,len(present))
-    t = Table(data, colWidths=col_widths, repeatRows=1); t.setStyle(self._pdf_table_style(header=True)); return t
+    t = LongTable(data, colWidths=col_widths, repeatRows=1, longTableOptimize=True); t.setStyle(self._pdf_table_style(header=True)); return t
 
 BeamsEC2App._pdf_df_table = _pdf_df_table_report_base
 

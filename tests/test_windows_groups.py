@@ -65,4 +65,17 @@ class WindowsGroupTests(unittest.TestCase):
                         app._write_pdf(str(pdf))
                         self.assertTrue(pdf.read_bytes().startswith(b'%PDF-'))
                         self.assertGreater(pdf.stat().st_size,1000)
+                    # The public export path keeps the Tk loop alive and snapshots data.
+                    from beams_ec2.exporting import start_export
+                    from time import monotonic, sleep
+                    for kind in ('xlsx', 'pdf'):
+                        output=Path(folder)/('background.'+kind)
+                        start_export(app,str(output),kind)
+                        deadline=monotonic()+30
+                        while app._export_running and monotonic()<deadline:
+                            app.update();sleep(.01)
+                        self.assertFalse(app._export_running,app.status_var.get())
+                        self.assertIn('exportado em',app.status_var.get())
+                        self.assertGreater(output.stat().st_size,1000)
+
         finally:app.destroy()

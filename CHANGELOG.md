@@ -1,3 +1,15 @@
+# v0.1.3-dev3 — exportação mais rápida
+
+- XLSX escrito numa única passagem, sem reabrir e regravar todas as folhas a cada extensão.
+- Memória XLSX usa as mesmas correções e os mesmos governantes ELS da memória PDF.
+- PDF reutiliza células de texto repetidas por coluna e usa tabelas otimizadas para documentos extensos.
+- Preparação da memória indexada por viga/caso, evitando pesquisas integrais repetidas.
+- Exportações em segundo plano com cópia dos resultados/parâmetros, janela responsiva e tempo decorrido.
+- Gravação temporária seguida de substituição apenas após sucesso; erros deixam de ser ocultados.
+- Testes de integridade das células, fórmulas literais, conservação do ficheiro anterior e isolamento do trabalho em segundo plano.
+- Ensaio local com CSV de 5964 linhas, 200 envelopes ELU e 44019 pontos ELS: XLSX 183,7 s → 8,5 s; memória PDF 12,2 s → 7,2 s. Tempos dependem do computador e da seleção de casos. O XLSX anterior terminou com um ficheiro inválido neste ensaio; o novo foi reaberto e verificado.
+- Texto e paginação dos três PDF comparados com a versão anterior, sem supressão de linhas; sem alterações aos modelos de cálculo.
+
 # v0.1.3-dev2 — ícone e rastreabilidade dos relatórios
 
 - Ícone da janela e do executável baseado na capa do repositório, com ficheiros PNG/ICO em assets.

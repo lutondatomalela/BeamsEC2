@@ -1207,15 +1207,23 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
     # Normalize values once at the final memory boundary, regardless of legacy wrappers.
     from .reporting import _force_location_report
     if results is not None and not results.empty and not base.empty:
-        for _, result in results.iterrows():
-            selected = (base['Viga'].astype(str) == str(_beam_label_labels(result))) & (base['Caso'].astype(str) == str(result.get('case','')))
-            for item, key in [('M+Ed','m_pos_at'),('M-Ed','m_neg_at'),('VEd','v_at'),('TEd','t_at')]:
-                mask = selected & base['Etapa'].eq('Esforços') & base['Item'].eq(item)
-                base.loc[mask,'Estado/Nota'] = _force_location_report(result.get(key))
-            if result.get('service_deflection_status') == 'Dados insuficientes':
-                mask = selected & base['Item'].astype(str).str.contains('Flecha',case=False)
-                base.loc[mask,'Valor'] = 'Não verificada'
-                base.loc[mask,'Estado/Nota'] = 'Dados insuficientes: ' + str(result.get('service_diagram_source','diagrama não validado'))
+        # Index once: avoid scanning the whole memory for every envelope.
+        lookup = {(str(_beam_label_labels(r)), str(r.get('case', ''))): r
+                  for _, r in results.iterrows()}
+        insufficient = {(str(_beam_label_labels(r)), str(r.get('case', ''))): r
+                        for _, r in results.iterrows() if r.get('service_deflection_status') == 'Dados insuficientes'}
+        effort_keys = {'M+Ed': 'm_pos_at', 'M-Ed': 'm_neg_at', 'VEd': 'v_at', 'TEd': 't_at'}
+        columns = ['Viga', 'Caso', 'Etapa', 'Item']
+        for index, (beam, case, stage, item) in zip(base.index, base[columns].itertuples(index=False, name=None)):
+            result = lookup.get((str(beam), str(case)))
+            if result is None:
+                continue
+            if stage == 'Esforços' and item in effort_keys:
+                base.at[index, 'Estado/Nota'] = _force_location_report(result.get(effort_keys[item]))
+            incomplete = insufficient.get((str(beam), str(case)))
+            if incomplete is not None and 'flecha' in str(item).lower():
+                base.at[index, 'Valor'] = 'Não verificada'
+                base.at[index, 'Estado/Nota'] = 'Dados insuficientes: ' + str(incomplete.get('service_diagram_source', 'diagrama não validado'))
     rows = []
     if results is not None and not results.empty:
         for _, r in results.iterrows():

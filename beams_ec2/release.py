@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.1.3-dev2"
+APP_VERSION = "v0.1.3-dev3"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -366,3 +366,10 @@ __all__ = [
     "read_table_file", "_prepare_input_frames",
     "build_summary_by_member", "build_normative_notes",
 ]
+
+# Export all audit sheets in a single streaming pass.
+from .exporting import write_excel as _write_excel_single_pass
+BeamsEC2App._write_excel = _write_excel_single_pass
+from .exporting import export_dialog as _export_dialog
+BeamsEC2App.export_excel = lambda self: _export_dialog(self, 'xlsx')
+BeamsEC2App.export_pdf_report = lambda self: _export_dialog(self, 'pdf')
