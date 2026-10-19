@@ -32,3 +32,18 @@ O modo explícito separa tensões CAR, fissuração/flecha QP e informação fre
 Referências consultadas: NP EN 1992-1-1:2010, 7.2(2), 7.2(3), 7.2(5), 7.3/Quadro 7.1N e 7.4. A aplicabilidade dos limites às classes de exposição e às ações impostas deve continuar a ser revista no âmbito da validação do motor.
 
 No modo explícito, o estado da flecha fica incompleto se o diagrama for insuficiente, inferido pela ordem das linhas ou ajustado ao vão. Os restantes critérios não ficam bloqueados por essa condição; esforços axiais relevantes continuam a exigir uma análise N-M própria. Um resultado incompleto não governante também não desaparece do estado ELS global.
+
+## Etapa 3 — desempenho e distribuição de teste
+
+Ensaio no CSV por nós (4 788 linhas), com seleção de teste ELU `101-117 201-208`, QP `302`, frequente `303` e característica `304`:
+
+| Fase | Antes | Depois |
+|---|---:|---:|
+| ELS | 32,14 s | 2,60 s |
+| Pormenorização | 31,04 s | 0,64 s |
+
+Os tempos foram medidos no ambiente local e excluem a importação e o cálculo ELU. As 1 425 linhas e 189 colunas de resultados preexistentes mantiveram-se iguais numa comparação integral. A seleção dos grupos nesta medição é uma hipótese de teste, não a classificação normativa dos ficheiros.
+
+A pormenorização mudou deliberadamente: utiliza os grupos ELU selecionados, elimina repetições por solução e deixa de produzir perfis de dispensas inferidos quando os diagramas são insuficientes no modo explícito. Os 1 425 registos repetidos passaram a 70 soluções distintas com notas de amarração e perfil incompleto no ensaio por nós. Não se atribui a redução de tempo apenas à reutilização.
+
+Foram acrescentados cinco testes: reutilização de soluções iguais, invalidação por mudança do recobrimento, invalidação entre análises, seleção correta dos casos na pormenorização e preservação de ângulos de corte diferentes. A compilação inclui um ensaio dentro do executável, sem Python externo, com importação e exportações.

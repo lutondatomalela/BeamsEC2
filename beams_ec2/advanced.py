@@ -558,8 +558,22 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     app._selected_sls_groups = resolve(app.df_clean['case'], texts)
     all_points = []
     all_combos = []
+    group_cache = {}
+    response_cache = {}
+    cage_ids = {}
     for idx, r in out.iterrows():
-        groups, source_note = _service_groups_advanced(app, r, target)
+        group_key = tuple(str(r.get(k, '')) for k in ('member', 'story', 'name'))
+        if group_key not in group_cache:
+            group_cache[group_key] = _service_groups_advanced(app, r, target)
+        groups, source_note = group_cache[group_key]
+        cage_key = (repr(_profile_from_result_serviceability(r)),) + tuple(
+            repr(r.get(k, None)) for k in ('member','name','story','material','fck_MPa','fyk_MPa',
+                'length_m','as_prov_bot_mm2','as_prov_top_mm2','d_bot_mm','d_top_mm',
+                'bot_rebar','top_rebar','bot_clear_spacing_mm','top_clear_spacing_mm','phi_st_mm','cover_mm'))
+        if cage_key not in cage_ids:
+            cage_ids[cage_key] = f'A{len(cage_ids)+1}'
+        cage_id = cage_ids[cage_key]
+        out.at[idx, 'service_cage_id'] = cage_id
         if not groups:
             out.at[idx, "service_status"] = "Dados insuficientes"
             out.at[idx, "service_note"] = "Sem combinação ELS correspondente; resultado de serviço não validado."
@@ -573,18 +587,23 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             from .sls_groups import parameters, policy
             group_name = (getattr(app, '_selected_sls_groups', None) or {}).get(case_label)
             params = parameters(base_params, group_name) if group_name else _params_for_case_advanced(base_params, case_label)
-            sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
-            if group_name:
-                sls = policy(sls, group_name)
+            cache_key = (cage_key, case_label, group_name)
+            if cache_key not in response_cache:
+                sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+                if group_name:
+                    sls = policy(sls, group_name)
+                sls['service_cage_id'] = cage_id
                 for point in points:
-                    point['service_group'] = group_name
+                    point['service_cage_id'] = cage_id
+                    point['service_group'] = group_name or 'LEGADO'
                     point['service_regime'] = params.regime
-            member_items.append(sls)
-            all_points.extend(points)
-            all_combos.append({
-                "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
-                **sls,
-            })
+                response_cache[cache_key] = sls
+                all_points.extend(points)
+                all_combos.append({
+                    "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
+                    **sls,
+                })
+            member_items.append(response_cache[cache_key])
         from .sls_groups import envelope
         governing = envelope(member_items) if getattr(app, '_selected_sls_groups', None) is not None else _governing_sls_advanced(member_items)
         for k, v in governing.items():
@@ -676,8 +695,24 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
     )
     raw = app.df_clean if getattr(app, "df_clean", None) is not None else pd.DataFrame()
     moment_col = str(app.var_moment_axis.get()).lower() if hasattr(app, "var_moment_axis") else "my"
+    from .sls_groups import resolve, selections
+    selected_groups = resolve(raw['case'], getattr(app, '_group_texts_for_run', None) or selections(app)) if not raw.empty else None
+    if not raw.empty:
+        if selected_groups is not None:
+            raw = raw[raw['case'].astype(str).map(selected_groups).eq('ELU')]
+        else:
+            from .case_selection import select_elu_frame
+            raw = select_elu_frame(raw, selections(app)['ELU'], app.var_service_case.get() if hasattr(app, 'var_service_case') else '')
+    members = {str(member):group for member,group in raw.groupby('member',sort=False)} if not raw.empty else {}
+    detailed = set()
     for _, r in results.iterrows():
         p = _profile_from_result_serviceability(r)
+        key = (repr(p),) + tuple(repr(r.get(k,None)) for k in (
+            'member','name','story','length_m','bot_rebar','top_rebar','fck_MPa','fyd_MPa',
+            'd_bot_mm','d_top_mm','d2_top_mm','cot_theta_shear'))
+        if key in detailed:
+            continue
+        detailed.add(key)
         fck = finite(r.get("fck_MPa"), parse_concrete_strength(r.get("material", DEFAULT_CONCRETE_CLASS)))
         fyd = finite(r.get("fyd_MPa"), finite(app.var_fyk.get(), 500.0) / DEFAULT_GAMMA_S_Reporting)
         nb, phib = _rebar_count_phi_advanced(r.get("bot_rebar", ""))
@@ -702,7 +737,7 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         })
         if raw.empty:
             continue
-        cand = raw[(raw["member"].astype(str) == str(r.get("member", ""))) & (~raw["case"].map(_case_is_els_serviceability))].copy()
+        cand = members.get(str(r.get('member','')), pd.DataFrame())
         story = str(r.get("story", "") or "")
         if story and "story" in cand.columns:
             same = cand[cand["story"].astype(str) == story]
@@ -714,13 +749,22 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         xgrid = np.linspace(0.0, L, 101)
         pos_env = np.zeros_like(xgrid)
         neg_env = np.zeros_like(xgrid)
+        verified = True
         for case, grp in cand.groupby("case", dropna=False):
-            x, M, _, _ = _moment_diagram_serviceability(grp, L, moment_col)
+            x, M, quality, source = _moment_diagram_serviceability(grp, L, moment_col)
+            if selected_groups is not None and (quality == 'Insuficiente' or any(
+                    text in source for text in ('ordem das linhas','ajustadas','normalizadas'))):
+                verified = False
             if len(x) < 2:
+                verified = False
                 continue
             mg = np.interp(xgrid, x, M)
             pos_env = np.maximum(pos_env, np.maximum(mg, 0.0))
             neg_env = np.maximum(neg_env, np.maximum(-mg, 0.0))
+        rows[-1]['profile_status'] = 'OK' if verified else 'Dados insuficientes'
+        if not verified:
+            rows[-1]['detailing_note'] += ' Sem perfil de dispensas: posições ou diagrama ELU insuficientes.'
+            continue
         cp = concrete_props(fck, gamma_c=DEFAULT_GAMMA_C_Reporting)
         bw = p.web_mm
         d_bot = finite(r.get("d_bot_mm"), p.h_mm - 50.0)
@@ -1060,7 +1104,9 @@ def _run_design_advanced(self):
             results = designer.design_dataframe(input_df, progress_callback=progress)
             self.after(0, lambda: self.status_var.set("A calcular envelope ELS..."))
             results = _apply_serviceability_advanced(self, results)
+            self.after(0, lambda: self.status_var.set("A verificar pormenorização das armaduras..."))
             self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(self, results)
+            self.after(0, lambda: self.status_var.set("A preparar tabelas e relatórios..."))
             self.df_internal_tests = _internal_tests_advanced()
             summary = build_summary_by_member(results) if self.var_summary.get() else pd.DataFrame()
             failures = results[results["status"] == "Falha"].copy() if "status" in results.columns else pd.DataFrame()

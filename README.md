@@ -42,7 +42,7 @@ Cada linha representa uma estação de uma viga numa combinação de acções. D
 Colunas obrigatórias:
 
 ```text
-Member/Node/Case | Station (m) | FZ (kN) | MX (kNm) | MY (kNm) |
+Member/Node/Case | FZ (kN) | MX (kNm) | MY (kNm) |
 Length (m) | Material | HY (cm) | HZ (cm)
 ```
 
@@ -178,3 +178,11 @@ Os campos **ELS característica**, **ELS frequente** e **ELS quase-permanente** 
 Sem resultados CAR ou QP, o ELS global fica incompleto. A tensão QP acima do limite de fluência linear pede revisão do modelo de fluência; não equivale, por si só, a falha resistente. A folha **11B_Grupos_Combinacoes** regista também os casos excluídos; **11C_ELS_Combinacoes** conserva os resultados por grupo e combinação.
 
 A importação por nós continua aceite. No modo explícito, a flecha calculada com posições inferidas pela ordem das linhas, normalizadas ou ajustadas ao vão fica como **Dados insuficientes**, sem impedir as restantes verificações disponíveis. Os métodos originais de secção mantêm-se nesta etapa. Deixar os três novos campos vazios mantém o modo anterior, com as limitações já documentadas.
+
+### Executável de teste v0.1.3-dev1
+
+A distribuição portátil desta etapa contém o executável, a tabela-tipo e a documentação. Extraia o ZIP para uma pasta nova e execute `BeamsEC2.exe`; não requer instalação de Python. O ficheiro BUILD.txt identifica o commit, as dependências e o SHA256 do executável. A compilação só disponibiliza o pacote depois de um ensaio dentro do próprio executável com importação XLSX, nós sem Station, seleção dos grupos, cálculo e exportações XLSX/PDF.
+
+O programa reutiliza verificações ELS apenas para dados de secção/armadura iguais na mesma análise. As tabelas ELS relacionam-se com os resultados ELU através de `service_cage_id`. Cada alteração de dados ou parâmetros inicia uma nova análise, sem reutilização de resultados anteriores. A pormenorização usa os grupos ELU selecionados e é calculada uma vez por solução distinta; um diagrama incompleto conserva as indicações de amarração, mas não origina perfis de dispensas.
+
+Esta é uma distribuição de teste. As limitações do motor original documentadas em `docs/RESTART_VALIDATION.md` continuam aplicáveis.

@@ -1,3 +1,12 @@
+# v0.1.3-dev1 — distribuição de teste
+
+- Reutilização local de verificações ELS com secção/armadura e parâmetros iguais, sem alterar resultados por combinação ELU.
+- Rastreabilidade das verificações reutilizadas pelo identificador service_cage_id.
+- Pormenorização por solução distinta, respeitando a seleção explícita ELU, incluindo CQC e excluindo ELS numerados.
+- No modo explícito, um diagrama ELU insuficiente conserva as notas de amarração sem produzir perfis de dispensas inferidos.
+- Mensagens distinguem cálculo ELS, pormenorização e preparação das tabelas.
+- Compilação Windows com ensaio interno do executável e registo de proveniência.
+
 # Desenvolvimento — grupos ELS explícitos
 
 - Campos separados para ELS característica, frequente e quase-permanente, mantendo o modo anterior com os campos vazios.
