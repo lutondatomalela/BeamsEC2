@@ -217,20 +217,11 @@ def _service_groups_advanced(app, r: pd.Series, target: str):
             cand = same
     if cand.empty:
         return [], "viga não encontrada"
-    target = str(target or "").strip()
-    if target and normalize_text(target) not in {"todas", "todos", "all"}:
-        tokens = [t.strip() for t in re.split(r"[;,|]+", target) if t.strip()]
-        selected = []
-        for case, grp in cand.groupby("case", dropna=False, sort=False):
-            cstr = str(case)
-            cnum = str(extract_combination_number(case))
-            if any(cstr == t or cnum == t or normalize_text(t) in normalize_text(cstr) for t in tokens):
-                selected.append((cstr, grp.copy()))
-        return selected, "combinação(ões) indicada(s)"
-    els = cand[cand["case"].map(_case_is_els_serviceability)]
-    if els.empty:
-        return [], "sem combinação ELS identificada"
-    return [(str(case), grp.copy()) for case, grp in els.groupby("case", dropna=False, sort=False)], "todas as combinações ELS reconhecidas"
+    from .case_selection import select_labels
+    selected = select_labels(cand['case'], target, validate_missing=False)
+    els = cand[cand['case'].astype(str).isin(selected)]
+    return [(str(case), grp.copy()) for case, grp in els.groupby('case', dropna=False, sort=False)], "seleção ELS" if str(target or '').strip() else "ELS reconhecidos pelo nome"
+
 
 
 def _bar_label_area_advanced(label: str) -> float:
@@ -829,6 +820,7 @@ def _internal_tests_advanced() -> pd.DataFrame:
 def _ensure_sls_vars_advanced(self):
     _ensure_sls_vars_serviceability(self)
     defaults = {
+        "var_elu_cases": (tk.StringVar, ""),
         "var_service_auto_regime": (tk.BooleanVar, True),
         "var_support_condition": (tk.StringVar, "Automática / por tabela"),
         "var_history_mode": (tk.StringVar, "Duas fases G+Q"),
@@ -1009,9 +1001,11 @@ def _run_design_advanced(self):
         cot_theta=2.0, crack_limit_mm=finite(self.var_crack_limit.get(), 0.30),
         deflection_ld_limit=finite(self.var_ld_limit.get(), 250.0), calc_mode=self.var_calc_mode.get(),
     )
-    elu_env = self.df_env[~self.df_env["case"].map(_case_is_els_serviceability)].copy() if "case" in self.df_env.columns else self.df_env.copy()
-    if elu_env.empty:
-        messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
+    from .case_selection import select_elu_frame
+    try:
+        elu_env = select_elu_frame(self.df_env, self.var_elu_cases.get(), self.var_service_case.get())
+    except ValueError as exc:
+        messagebox.showwarning("Seleção de combinações", str(exc))
         return
     input_df = reduce_to_governing_cases(elu_env) if self.var_reduce_cases.get() else elu_env
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
@@ -1061,6 +1055,7 @@ def _parameters_df_advanced(self):
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
     extra = pd.DataFrame([
+        ["Seleção ELU", self.var_elu_cases.get().strip() if hasattr(self, 'var_elu_cases') and self.var_elu_cases.get().strip() else "Regra original, excluindo ELS selecionados"],
         ["Envelope ELS", "todas as combinações reconhecidas" if not self.var_service_case.get().strip() else self.var_service_case.get().strip()],
         ["Regime automático", "Sim" if p.auto_regime else "Não"], ["Condição de apoio", p.support_condition],
         ["Histórico", p.history_mode], ["Fração permanente [%]", p.permanent_fraction_pct],

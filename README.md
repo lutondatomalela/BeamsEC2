@@ -158,3 +158,11 @@ requirements-build.txt       dependências de compilação
 ## Âmbito e responsabilidade
 
 O BeamsEC2 é uma ferramenta de apoio ao dimensionamento. A interpretação do modelo estrutural, a selecção das combinações, a confirmação das condições de apoio, a validação das geometrias e a aprovação das soluções permanecem sob responsabilidade do utilizador.
+
+### Seleção das combinações (desenvolvimento a partir da v0.1.2)
+
+O campo opcional **Combinações ELU** aceita listas e intervalos, por exemplo `101-117 201-208`. O campo **Combinações ELS** aceita o mesmo formato e nomes completos separados por ponto e vírgula. Os números são comparados exatamente: selecionar `101` não seleciona `1101`.
+
+Uma combinação explicitamente selecionada como ELS deixa de entrar no cálculo ELU. Sobreposições explícitas entre os dois grupos e números inexistentes são recusados antes de iniciar o cálculo. Com o campo ELU vazio, mantém-se a seleção original por nome, excluindo também os ELS indicados. Com o campo ELS vazio, mantém-se o reconhecimento original pelo nome; para combinações apenas numéricas, indique os grupos explicitamente.
+
+A importação por nós continua disponível sem `Station`. A identificação `Member/Point (m)/Case` também é aceite, preservando rótulos como `+/- MY x=...`. Neste passo, estes rótulos são tratados como identificadores: não são convertidos em coordenadas. Os métodos de cálculo e as hipóteses ELS da versão original mantêm-se e serão objeto de validação própria.

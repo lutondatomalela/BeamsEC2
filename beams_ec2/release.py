@@ -90,6 +90,8 @@ def _build_sidebar_clean(self, parent):
     ttk.Combobox(params, textvariable=self.var_torsion_axis, values=["MX", "MY", "MZ", "Nenhuma"], state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
     ttk.Checkbutton(params, text="Reduzir para casos governantes", variable=self.var_reduce_cases).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=3)
     ttk.Checkbutton(params, text="Gerar resumo por viga", variable=self.var_summary).grid(row=8, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    self._add_label_entry(params, "Combinações ELU", self.var_elu_cases, 9)
+    ttk.Label(params, text="Opcional: listas/intervalos, ex. 101-117 201-208", wraplength=330).grid(row=10, column=0, columnspan=2, sticky="w", padx=6)
     params.columnconfigure(1, weight=1)
 
     sls = ttk.LabelFrame(parent, text="3. Estados-limite de serviço")

@@ -1,3 +1,11 @@
+# Desenvolvimento — reinício a partir da v0.1.2
+
+- Seleção opcional de combinações ELU por listas e intervalos; seleção ELS com correspondência exata.
+- Combinações ELS indicadas deixam de ser incluídas no dimensionamento ELU.
+- Validação de sobreposições, seleções inválidas e combinações inexistentes.
+- Preservação da importação por nós sem posições; reconhecimento do cabeçalho por pontos e de identificadores que contêm barras.
+- Métodos de cálculo mantidos nesta etapa; testes de regressão da importação e seleção.
+
 # Changelog
 
 ## v0.1.2
