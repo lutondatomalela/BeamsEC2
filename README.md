@@ -42,7 +42,7 @@ Cada linha representa uma estação de uma viga numa combinação de acções. D
 Colunas obrigatórias:
 
 ```text
-Member/Node/Case | Station (m) | FZ (kN) | MX (kNm) | MY (kNm) |
+Member/Node/Case | FZ (kN) | MX (kNm) | MY (kNm) |
 Length (m) | Material | HY (cm) | HZ (cm)
 ```
 
@@ -158,3 +158,37 @@ requirements-build.txt       dependências de compilação
 ## Âmbito e responsabilidade
 
 O BeamsEC2 é uma ferramenta de apoio ao dimensionamento. A interpretação do modelo estrutural, a selecção das combinações, a confirmação das condições de apoio, a validação das geometrias e a aprovação das soluções permanecem sob responsabilidade do utilizador.
+
+### Seleção das combinações (desenvolvimento a partir da v0.1.2)
+
+A interface utiliza grupos explícitos: indique ELU e ELS característica, frequente e quase-permanente por números ou intervalos. Casos não classificados ficam excluídos. Para completar as verificações implementadas, indique característica e quase-permanente. Consulte as instruções no programa e [o guia de utilização](docs/UTILIZACAO.md).
+
+As combinações ELS não entram no cálculo ELU. Sobreposições entre grupos e números inexistentes são recusados antes do cálculo. A interface exige seleção explícita; não deduz o regime a partir da numeração ou de CQC.
+
+A importação por nós continua disponível sem `Station`. A identificação `Member/Point (m)/Case` também é aceite, preservando rótulos como `+/- MY x=...`. Neste passo, estes rótulos são tratados como identificadores: não são convertidos em coordenadas. Os métodos de cálculo e as hipóteses ELS da versão original mantêm-se e serão objeto de validação própria.
+
+### Grupos explícitos ELS
+
+Preencha **Combinações ELU** e os grupos **ELS característica**, **ELS frequente** e **ELS quase-permanente** aplicáveis. Cada grupo aceita listas/intervalos. Os casos sem grupo ficam excluídos e a mesma combinação não pode pertencer a dois grupos. `CQC` não determina um regime ELS.
+
+- Característica: verificações das tensões no aço e no betão.
+- Quase-permanente: fissuração, flecha final e controlo da hipótese de fluência linear.
+- Frequente: valores informativos, sem governar os critérios anteriores.
+
+Sem resultados CAR ou QP, o ELS global fica incompleto. A tensão QP acima do limite de fluência linear pede revisão do modelo de fluência; não equivale, por si só, a falha resistente. A folha **11B_Grupos_Combinacoes** regista também os casos excluídos; **11C_ELS_Combinacoes** conserva os resultados por grupo e combinação.
+
+A importação por nós continua aceite. No modo explícito, a flecha calculada com posições inferidas pela ordem das linhas, normalizadas ou ajustadas ao vão fica como **Dados insuficientes**, sem impedir as restantes verificações disponíveis. Os métodos originais de secção mantêm-se nesta etapa. Deixar os três novos campos vazios mantém o modo anterior, com as limitações já documentadas.
+
+### Executável de teste v0.1.3-dev1
+
+A distribuição portátil desta etapa contém o executável, a tabela-tipo e a documentação. Extraia o ZIP para uma pasta nova e execute `BeamsEC2.exe`; não requer instalação de Python. O ficheiro BUILD.txt identifica o commit, as dependências e o SHA256 do executável. A compilação só disponibiliza o pacote depois de um ensaio dentro do próprio executável com importação XLSX, nós sem Station, seleção dos grupos, cálculo e exportações XLSX/PDF.
+
+O programa reutiliza verificações ELS apenas para dados de secção/armadura iguais na mesma análise. As tabelas ELS relacionam-se com os resultados ELU através de `service_cage_id`. Cada alteração de dados ou parâmetros inicia uma nova análise, sem reutilização de resultados anteriores. A pormenorização usa os grupos ELU selecionados e é calculada uma vez por solução distinta; um diagrama incompleto conserva as indicações de amarração, mas não origina perfis de dispensas.
+
+Esta é uma distribuição de teste. As limitações do motor original documentadas em `docs/RESTART_VALIDATION.md` continuam aplicáveis.
+
+### Ícone e relatórios — v0.1.3-dev2
+
+O ícone em `assets/beamsec2.ico` é incorporado no executável; `assets/beamsec2.png` identifica a janela. Ambos se baseiam na identidade da capa do repositório. A distribuição não requer ficheiros de imagem externos.
+
+A memória distingue nós de distâncias em metros, inclui seleções e governantes ELS e documenta todas as combinações efetivamente calculadas. O cabeçalho inclui os estados Verificar. Uma flecha sem dados suficientes aparece como não verificada, sem apresentar o valor estimado como resultado validado.

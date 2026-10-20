@@ -78,7 +78,7 @@ class SLSParametersAdvanced(SLSParametersServiceability):
 
 def _case_regime_advanced(case_value, fallback: str) -> str:
     s = normalize_text(str(case_value or ""))
-    if any(k in s for k in ["quase", "cqc", "q.p", " qp", "qp "]):
+    if any(k in s for k in ["quase", "q.p", " qp", "qp "]):
         return "Quase-permanente / longo prazo"
     if any(k in s for k in ["frequente", "freq", "repetida", "repet"]):
         return "Frequente / repetida"
@@ -217,20 +217,18 @@ def _service_groups_advanced(app, r: pd.Series, target: str):
             cand = same
     if cand.empty:
         return [], "viga não encontrada"
-    target = str(target or "").strip()
-    if target and normalize_text(target) not in {"todas", "todos", "all"}:
-        tokens = [t.strip() for t in re.split(r"[;,|]+", target) if t.strip()]
-        selected = []
-        for case, grp in cand.groupby("case", dropna=False, sort=False):
-            cstr = str(case)
-            cnum = str(extract_combination_number(case))
-            if any(cstr == t or cnum == t or normalize_text(t) in normalize_text(cstr) for t in tokens):
-                selected.append((cstr, grp.copy()))
-        return selected, "combinação(ões) indicada(s)"
-    els = cand[cand["case"].map(_case_is_els_serviceability)]
-    if els.empty:
-        return [], "sem combinação ELS identificada"
-    return [(str(case), grp.copy()) for case, grp in els.groupby("case", dropna=False, sort=False)], "todas as combinações ELS reconhecidas"
+    from .sls_groups import selections, resolve, REGIMES
+    mapping = getattr(app, '_selected_sls_groups', None)
+    if mapping is None:
+        mapping = resolve(df['case'], getattr(app, '_group_texts_for_run', None) or selections(app))
+    if mapping is not None:
+        selected = {case for case, group in mapping.items() if group in REGIMES}
+    else:
+        from .case_selection import select_labels
+        selected = select_labels(cand['case'], target, validate_missing=False)
+    els = cand[cand['case'].astype(str).isin(selected)]
+    return [(str(case), grp.copy()) for case, grp in els.groupby('case', dropna=False, sort=False)], "seleção ELS" if str(target or '').strip() else "ELS reconhecidos pelo nome"
+
 
 
 def _bar_label_area_advanced(label: str) -> float:
@@ -553,13 +551,34 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     out = results.copy()
     target = app.var_service_case.get().strip() if hasattr(app, "var_service_case") else ""
     base_params = _sls_params_from_app_advanced(app)
+    from .sls_groups import resolve, selections
+    texts = getattr(app, '_group_texts_for_run', None)
+    if texts is None:
+        texts = selections(app)
+    app._selected_sls_groups = resolve(app.df_clean['case'], texts)
     all_points = []
     all_combos = []
+    group_cache = {}
+    response_cache = {}
+    cage_ids = {}
     for idx, r in out.iterrows():
-        groups, source_note = _service_groups_advanced(app, r, target)
+        group_key = tuple(str(r.get(k, '')) for k in ('member', 'story', 'name'))
+        if group_key not in group_cache:
+            group_cache[group_key] = _service_groups_advanced(app, r, target)
+        groups, source_note = group_cache[group_key]
+        cage_key = (repr(_profile_from_result_serviceability(r)),) + tuple(
+            repr(r.get(k, None)) for k in ('member','name','story','material','fck_MPa','fyk_MPa',
+                'length_m','as_prov_bot_mm2','as_prov_top_mm2','d_bot_mm','d_top_mm',
+                'bot_rebar','top_rebar','bot_clear_spacing_mm','top_clear_spacing_mm','phi_st_mm','cover_mm'))
+        if cage_key not in cage_ids:
+            cage_ids[cage_key] = f'A{len(cage_ids)+1}'
+        cage_id = cage_ids[cage_key]
+        out.at[idx, 'service_cage_id'] = cage_id
         if not groups:
             out.at[idx, "service_status"] = "Dados insuficientes"
             out.at[idx, "service_note"] = "Sem combinação ELS correspondente; resultado de serviço não validado."
+            out.at[idx, "service_pending_checks"] = "Combinações ELS da viga"
+            out.at[idx, "service_required_data"] = "Importar esforços ELS desta viga e classificar as combinações nos grupos característica e quase-permanente."
             out.at[idx, "service_case_source"] = source_note
             out.at[idx, "service_diagram_quality"] = "Insuficiente"
             if str(out.at[idx, "status"] if "status" in out.columns else "OK") == "OK":
@@ -567,15 +586,28 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
             continue
         member_items = []
         for case_label, group in groups:
-            params = _params_for_case_advanced(base_params, case_label)
-            sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
-            member_items.append(sls)
-            all_points.extend(points)
-            all_combos.append({
-                "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
-                **sls,
-            })
-        governing = _governing_sls_advanced(member_items)
+            from .sls_groups import parameters, policy
+            group_name = (getattr(app, '_selected_sls_groups', None) or {}).get(case_label)
+            params = parameters(base_params, group_name) if group_name else _params_for_case_advanced(base_params, case_label)
+            cache_key = (cage_key, case_label, group_name)
+            if cache_key not in response_cache:
+                sls, points = _calculate_member_sls_advanced(app, r, group, case_label, source_note, params)
+                if group_name:
+                    sls = policy(sls, group_name)
+                sls['service_cage_id'] = cage_id
+                for point in points:
+                    point['service_cage_id'] = cage_id
+                    point['service_group'] = group_name or 'LEGADO'
+                    point['service_regime'] = params.regime
+                response_cache[cache_key] = sls
+                all_points.extend(points)
+                all_combos.append({
+                    "viga": _beam_label_labels(r), "member": r.get("member", ""), "name": r.get("name", ""), "story": r.get("story", ""),
+                    **sls,
+                })
+            member_items.append(response_cache[cache_key])
+        from .sls_groups import envelope
+        governing = envelope(member_items) if getattr(app, '_selected_sls_groups', None) is not None else _governing_sls_advanced(member_items)
         for k, v in governing.items():
             out.at[idx, k] = v
         current = str(out.at[idx, "status"] if "status" in out.columns else "OK")
@@ -589,6 +621,7 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
     app.df_sls_points = pd.DataFrame(all_points)
     app.df_sls_combinations = pd.DataFrame(all_combos)
     app.df_sls_parameters = pd.DataFrame([
+        *[[group, text] for group, text in texts.items()],
         ["Regime base", base_params.regime], ["Regime automático", "Sim" if base_params.auto_regime else "Não"],
         ["Combinações ELS", target or "todas as reconhecidas"], ["Condição de apoio", base_params.support_condition],
         ["Histórico de carregamento", base_params.history_mode], ["Fração permanente [%]", base_params.permanent_fraction_pct],
@@ -616,7 +649,8 @@ def _sls_audit_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         "service_wk_est_mm", "service_wk_lim_mm", "service_deflection_instant_mm",
         "service_deflection_final_mm", "service_deflection_est_mm", "service_deflection_lim_mm",
         "service_deflection_limit", "service_crack_status", "service_deflection_status",
-        "service_concrete_status", "service_stress_status", "service_status", "service_note",
+        "service_concrete_status", "service_stress_status", "service_creep_status",
+        "service_combination_creep", "service_status", "service_pending_checks", "service_required_data", "service_note",
     ]
     if results is None or results.empty:
         return pd.DataFrame()
@@ -663,8 +697,24 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
     )
     raw = app.df_clean if getattr(app, "df_clean", None) is not None else pd.DataFrame()
     moment_col = str(app.var_moment_axis.get()).lower() if hasattr(app, "var_moment_axis") else "my"
+    from .sls_groups import resolve, selections
+    selected_groups = resolve(raw['case'], getattr(app, '_group_texts_for_run', None) or selections(app)) if not raw.empty else None
+    if not raw.empty:
+        if selected_groups is not None:
+            raw = raw[raw['case'].astype(str).map(selected_groups).eq('ELU')]
+        else:
+            from .case_selection import select_elu_frame
+            raw = select_elu_frame(raw, selections(app)['ELU'], app.var_service_case.get() if hasattr(app, 'var_service_case') else '')
+    members = {str(member):group for member,group in raw.groupby('member',sort=False)} if not raw.empty else {}
+    detailed = set()
     for _, r in results.iterrows():
         p = _profile_from_result_serviceability(r)
+        key = (repr(p),) + tuple(repr(r.get(k,None)) for k in (
+            'member','name','story','length_m','bot_rebar','top_rebar','fck_MPa','fyd_MPa',
+            'd_bot_mm','d_top_mm','d2_top_mm','cot_theta_shear'))
+        if key in detailed:
+            continue
+        detailed.add(key)
         fck = finite(r.get("fck_MPa"), parse_concrete_strength(r.get("material", DEFAULT_CONCRETE_CLASS)))
         fyd = finite(r.get("fyd_MPa"), finite(app.var_fyk.get(), 500.0) / DEFAULT_GAMMA_S_Reporting)
         nb, phib = _rebar_count_phi_advanced(r.get("bot_rebar", ""))
@@ -689,7 +739,7 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         })
         if raw.empty:
             continue
-        cand = raw[(raw["member"].astype(str) == str(r.get("member", ""))) & (~raw["case"].map(_case_is_els_serviceability))].copy()
+        cand = members.get(str(r.get('member','')), pd.DataFrame())
         story = str(r.get("story", "") or "")
         if story and "story" in cand.columns:
             same = cand[cand["story"].astype(str) == story]
@@ -701,13 +751,22 @@ def _longitudinal_detailing_advanced(app, results: pd.DataFrame):
         xgrid = np.linspace(0.0, L, 101)
         pos_env = np.zeros_like(xgrid)
         neg_env = np.zeros_like(xgrid)
+        verified = True
         for case, grp in cand.groupby("case", dropna=False):
-            x, M, _, _ = _moment_diagram_serviceability(grp, L, moment_col)
+            x, M, quality, source = _moment_diagram_serviceability(grp, L, moment_col)
+            if selected_groups is not None and (quality == 'Insuficiente' or any(
+                    text in source for text in ('ordem das linhas','ajustadas','normalizadas'))):
+                verified = False
             if len(x) < 2:
+                verified = False
                 continue
             mg = np.interp(xgrid, x, M)
             pos_env = np.maximum(pos_env, np.maximum(mg, 0.0))
             neg_env = np.maximum(neg_env, np.maximum(-mg, 0.0))
+        rows[-1]['profile_status'] = 'OK' if verified else 'Dados insuficientes'
+        if not verified:
+            rows[-1]['detailing_note'] += ' Sem perfil de dispensas: posições ou diagrama ELU insuficientes.'
+            continue
         cp = concrete_props(fck, gamma_c=DEFAULT_GAMMA_C_Reporting)
         bw = p.web_mm
         d_bot = finite(r.get("d_bot_mm"), p.h_mm - 50.0)
@@ -829,6 +888,10 @@ def _internal_tests_advanced() -> pd.DataFrame:
 def _ensure_sls_vars_advanced(self):
     _ensure_sls_vars_serviceability(self)
     defaults = {
+        "var_sls_char_cases": (tk.StringVar, ""),
+        "var_sls_freq_cases": (tk.StringVar, ""),
+        "var_sls_qp_cases": (tk.StringVar, ""),
+        "var_elu_cases": (tk.StringVar, ""),
         "var_service_auto_regime": (tk.BooleanVar, True),
         "var_support_condition": (tk.StringVar, "Automática / por tabela"),
         "var_history_mode": (tk.StringVar, "Duas fases G+Q"),
@@ -996,6 +1059,8 @@ BeamsEC2App.validate_inputs = _validate_inputs_advanced
 _run_design_serviceability_base = BeamsEC2App.run_design
 
 def _run_design_advanced(self):
+    if getattr(self, '_calculation_running', False):
+        return
     _ensure_sls_vars_advanced(self)
     self.var_agg.set(f"{DEFAULT_AGGREGATE_MM_Reporting:.0f}")
     self.var_gamma_c.set(f"{DEFAULT_GAMMA_C_Reporting:.2f}")
@@ -1009,10 +1074,27 @@ def _run_design_advanced(self):
         cot_theta=2.0, crack_limit_mm=finite(self.var_crack_limit.get(), 0.30),
         deflection_ld_limit=finite(self.var_ld_limit.get(), 250.0), calc_mode=self.var_calc_mode.get(),
     )
-    elu_env = self.df_env[~self.df_env["case"].map(_case_is_els_serviceability)].copy() if "case" in self.df_env.columns else self.df_env.copy()
-    if elu_env.empty:
-        messagebox.showwarning("Aviso", "Não foram identificadas combinações ELU para o dimensionamento.")
+    from .case_selection import select_elu_frame
+    try:
+        from .sls_groups import resolve, selections
+        group_texts = selections(self)
+        selected_groups = resolve(self.df_env['case'], group_texts)
+        if selected_groups is None:
+            elu_env = select_elu_frame(self.df_env, self.var_elu_cases.get(), self.var_service_case.get())
+        else:
+            if self.var_service_case.get().strip():
+                raise ValueError('Utilize os grupos ELS ou o campo anterior, sem misturar os dois modos.')
+            elu_env = self.df_env[self.df_env['case'].astype(str).map(selected_groups).eq('ELU')].copy()
+            if elu_env.empty:
+                raise ValueError('Indique as combinações ELU no modo de grupos explícitos.')
+            elu_env['limit_state'] = 'ELU'
+        self.df_combination_groups = pd.DataFrame([
+            {'case':case, 'combination_group':group} for case, group in (selected_groups or {}).items()])
+    except ValueError as exc:
+        messagebox.showwarning("Seleção de combinações", str(exc))
         return
+    self._group_texts_for_run = group_texts
+    self._calculation_running = True
     input_df = reduce_to_governing_cases(elu_env) if self.var_reduce_cases.get() else elu_env
     self.df_calc_input = input_df.copy(); self.progress_var.set(0.0); self.status_var.set("Análise ELU/ELS em curso...")
     def progress(done, total):
@@ -1024,7 +1106,9 @@ def _run_design_advanced(self):
             results = designer.design_dataframe(input_df, progress_callback=progress)
             self.after(0, lambda: self.status_var.set("A calcular envelope ELS..."))
             results = _apply_serviceability_advanced(self, results)
+            self.after(0, lambda: self.status_var.set("A verificar pormenorização das armaduras..."))
             self.df_longitudinal_detailing, self.df_longitudinal_profile = _longitudinal_detailing_advanced(self, results)
+            self.after(0, lambda: self.status_var.set("A preparar tabelas e relatórios..."))
             self.df_internal_tests = _internal_tests_advanced()
             summary = build_summary_by_member(results) if self.var_summary.get() else pd.DataFrame()
             failures = results[results["status"] == "Falha"].copy() if "status" in results.columns else pd.DataFrame()
@@ -1037,6 +1121,7 @@ def _run_design_advanced(self):
                 internal = internal.rename(columns={"Teste": "Verificação", "Estado": "Resultado"})
                 validation = pd.concat([validation, internal], ignore_index=True, sort=False)
             def finish():
+                self._calculation_running = False
                 self.df_results=results; self.df_summary=summary; self.df_failures=failures; self.df_ok=ok
                 self.df_validation=validation; self.df_notes=build_normative_notes(); self.df_filtered=pd.DataFrame()
                 self.show_df(self.tree_results,self.df_results); self.show_df(self.tree_summary,self.df_summary)
@@ -1048,6 +1133,7 @@ def _run_design_advanced(self):
                 self.status_var.set(f"Cálculo concluído: {len(results)} envelopes; {len(failures)} falhas; {n_ver} a verificar; testes internos com {n_tests_fail} falhas.")
             self.after(0, finish)
         except Exception as exc:
+            self.after(0, lambda: setattr(self, '_calculation_running', False))
             msg=str(exc); self.after(0,lambda m=msg:messagebox.showerror("Erro",m)); self.after(0,lambda:self.status_var.set("Falha na análise.")); self.after(0,lambda:self.progress_var.set(0.0))
     threading.Thread(target=worker,daemon=True).start()
 
@@ -1058,9 +1144,12 @@ BeamsEC2App.run_design = _run_design_advanced
 _parameters_df_advanced_base = BeamsEC2App._parameters_df
 
 def _parameters_df_advanced(self):
+    from .sls_groups import selections
     base = _parameters_df_advanced_base(self)
     p = _sls_params_from_app_advanced(self)
     extra = pd.DataFrame([
+        *[[group, text] for group, text in (getattr(self, '_group_texts_for_run', None) or selections(self)).items()],
+        ["Seleção ELU", self.var_elu_cases.get().strip() if hasattr(self, 'var_elu_cases') and self.var_elu_cases.get().strip() else "Regra original, excluindo ELS selecionados"],
         ["Envelope ELS", "todas as combinações reconhecidas" if not self.var_service_case.get().strip() else self.var_service_case.get().strip()],
         ["Regime automático", "Sim" if p.auto_regime else "Não"], ["Condição de apoio", p.support_condition],
         ["Histórico", p.history_mode], ["Fração permanente [%]", p.permanent_fraction_pct],
@@ -1082,6 +1171,7 @@ def _write_excel_advanced(self, path: str):
         from openpyxl.utils import get_column_letter
         wb = load_workbook(path)
         datasets = [
+            ("11B_Grupos_Combinacoes", getattr(self, "df_combination_groups", pd.DataFrame())),
             ("11C_ELS_Combinacoes", getattr(self, "df_sls_combinations", pd.DataFrame())),
             ("12A_Porm_Longitudinal", getattr(self, "df_longitudinal_detailing", pd.DataFrame())),
             ("12B_Perfil_Armadura", getattr(self, "df_longitudinal_profile", pd.DataFrame())),
@@ -1115,17 +1205,46 @@ BeamsEC2App._write_excel = _write_excel_advanced
 _calc_memory_advanced_base = _calc_memory_df_serviceability
 
 def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
-    base = _calc_memory_advanced_base(results)
+    base = _calc_memory_advanced_base(results).copy()
+    # Normalize values once at the final memory boundary, regardless of legacy wrappers.
+    from .reporting import _force_location_report
+    if results is not None and not results.empty and not base.empty:
+        # Index once: avoid scanning the whole memory for every envelope.
+        lookup = {(str(_beam_label_labels(r)), str(r.get('case', ''))): r
+                  for _, r in results.iterrows()}
+        insufficient = {(str(_beam_label_labels(r)), str(r.get('case', ''))): r
+                        for _, r in results.iterrows() if r.get('service_deflection_status') == 'Dados insuficientes'}
+        effort_keys = {'M+Ed': 'm_pos_at', 'M-Ed': 'm_neg_at', 'VEd': 'v_at', 'TEd': 't_at'}
+        columns = ['Viga', 'Caso', 'Etapa', 'Item']
+        for index, (beam, case, stage, item) in zip(base.index, base[columns].itertuples(index=False, name=None)):
+            result = lookup.get((str(beam), str(case)))
+            if result is None:
+                continue
+            if stage == 'Esforços' and item in effort_keys:
+                base.at[index, 'Estado/Nota'] = _force_location_report(result.get(effort_keys[item]))
+            incomplete = insufficient.get((str(beam), str(case)))
+            if incomplete is not None and 'flecha' in str(item).lower():
+                base.at[index, 'Valor'] = 'Não verificada'
+                base.at[index, 'Estado/Nota'] = 'Dados insuficientes: ' + str(incomplete.get('service_diagram_source', 'diagrama não validado'))
     rows = []
     if results is not None and not results.empty:
         for _, r in results.iterrows():
             common = {"Viga": _beam_label_labels(r), "Caso": r.get("case", ""), "Piso": r.get("story", ""), "Secção": r.get("section_geometry_summary", r.get("section_type", ""))}
+            if r.get('service_pending_checks'):
+                rows.extend([
+                    {**common, "Etapa": "Diagnóstico ELS", "Item": "Verificações por concluir", "Valor": r.get('service_pending_checks'), "Unidade": "-", "Critério/Referência": "Completude dos dados/modelo", "Estado/Nota": "Não verificadas"},
+                    {**common, "Etapa": "Diagnóstico ELS", "Item": "Dados ou ação necessários", "Valor": r.get('service_required_data', ''), "Unidade": "-", "Critério/Referência": "Completar ou verificar externamente", "Estado/Nota": "Verificar"},
+                ])
             rows.extend([
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},
+                {**common, "Etapa": "ELS envelope", "Item": "Governantes tensões aço / betão", "Valor": f"{r.get('service_combination_steel','')} / {r.get('service_combination_concrete','')}", "Unidade": "-", "Critério/Referência": "7.2; característica", "Estado/Nota": r.get('service_stress_status','')},
+                {**common, "Etapa": "ELS envelope", "Item": "Fluência linear QP", "Valor": r.get('service_combination_creep',''), "Unidade": "-", "Critério/Referência": "7.2(3)", "Estado/Nota": r.get('service_creep_status','')},
                 {**common, "Etapa": "Pormenorização", "Item": "Armadura ELS ao longo do vão", "Valor": r.get("service_reinforcement_model", ""), "Unidade": "-", "Critério/Referência": "Modelo de rigidez", "Estado/Nota": ""},
             ])
     return pd.concat([base, pd.DataFrame(rows)], ignore_index=True) if rows else base
+
+BeamsEC2App._memory_for_report = staticmethod(_calc_memory_df_advanced)
 
 globals()["_calc_memory_df_serviceability"] = _calc_memory_df_advanced
 globals()["_calc_memory_df_geometry"] = _calc_memory_df_advanced
@@ -1230,7 +1349,9 @@ def _write_pdf_advanced(self, path: str):
     doc.title = APP_NAME; doc.author = ""; doc.subject = APP_SUBJECT
     story = [_program_link_pdf_reporting(styles)]
     n_total=len(results); n_ok=int((results.get("status",pd.Series(dtype=str))=="OK").sum()); n_fail=int((results.get("status",pd.Series(dtype=str))=="Falha").sum())
-    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes",str(n_total),"OK/Falhas",f"{n_ok}/{n_fail}"]]
+    n_check=int((results.get('status',pd.Series(dtype=str))=='Verificar').sum())
+    n_members=results['member'].nunique() if 'member' in results else 0
+    meta=[["Data",datetime.now().strftime("%Y-%m-%d %H:%M"),"Suporte normativo","NP EN 1992-1-1:2010"],["Envelopes ELU / Barras",f"{n_total} / {n_members}","OK / Falha / Verificar",f"{n_ok} / {n_fail} / {n_check}"]]
     t=Table(meta,colWidths=[38*mm,90*mm,38*mm,105*mm]); t.setStyle(self._pdf_table_style(header=False))
     story += [t,Spacer(1,5*mm),Paragraph("Relatório técnico",styles["Section"])]
     geom=summary.copy(); geom=geom.assign(viga=geom.apply(_beam_label_labels,axis=1)) if not geom.empty else geom

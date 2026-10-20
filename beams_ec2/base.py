@@ -110,11 +110,12 @@ def mm2_to_cm2(x: float) -> float:
 
 def split_member_case(text: str) -> Tuple[str, str, str]:
     s = str(text)
-    parts = [p.strip() for p in s.split("/")]
-    member = parts[0] if len(parts) > 0 else ""
-    node = parts[1] if len(parts) > 1 else ""
-    case = parts[2] if len(parts) > 2 else ""
-    return member, node, case
+    parts = s.split("/", 1)
+    member = parts[0].strip()
+    if len(parts) < 2:
+        return member, "", ""
+    point_case = parts[1].rsplit("/", 1)
+    return member, point_case[0].strip(), point_case[1].strip() if len(point_case) > 1 else ""
 
 
 def extract_combination_number(case_value) -> str:
@@ -161,7 +162,7 @@ def parse_pasted_table(text: str) -> pd.DataFrame:
 
 
 COLUMN_ALIASES = {
-    "member_case": ["member/node/case", "member/n", "member node case", "barra/no/caso", "membro/no/caso"],
+    "member_case": ["member/point (m)/case", "member/node/case", "member/n", "member node case", "barra/no/caso", "membro/no/caso"],
     "member": ["member", "bar", "barra", "membro", "element", "elemento"],
     "node": ["node", "no", "nó", "joint", "junta"],
     "case": ["case", "caso", "combination", "combinacao", "combinação", "load case", "loadcase"],
@@ -243,7 +244,8 @@ def _max_abs_with_pos(grp: pd.DataFrame, col: str) -> Tuple[float, str]:
     idx = vals.idxmax()
     pos = grp.loc[idx].get("station", "")
     if not math.isfinite(finite(pos, float("nan"))):
-        pos = grp.loc[idx].get("node", "")
+        node = str(grp.loc[idx].get("node", "")).strip()
+        pos = f"Nó {node}" if node else "posição não disponível"
     return float(vals.loc[idx]), str(pos)
 
 
@@ -265,7 +267,8 @@ def _max_signed(grp: pd.DataFrame, col: str, positive: bool = True) -> Tuple[flo
         value = float(abs(series.loc[idx]))
     pos = grp.loc[idx].get("station", "")
     if not math.isfinite(finite(pos, float("nan"))):
-        pos = grp.loc[idx].get("node", "")
+        node = str(grp.loc[idx].get("node", "")).strip()
+        pos = f"Nó {node}" if node else "posição não disponível"
     return value, str(pos)
 
 
@@ -1027,6 +1030,8 @@ class BeamsEC2App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
+        from .branding import apply_icon
+        apply_icon(self)
         self.geometry("1280x780")
         self.minsize(980, 620)
 

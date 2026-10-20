@@ -11,7 +11,7 @@ from . import advanced as _implementation
 from .table_io import read_table_file
 globals().update({k: v for k, v in vars(_implementation).items() if not k.startswith("__")})
 
-APP_VERSION = "v0.1"
+APP_VERSION = "v0.1.3-dev4"
 APP_TITLE = "BeamsEC2 - Dimensionamento de Vigas Segundo o EC2"
 APP_AUTHOR = ""
 APP_TABLE_DESCRIPTION = (
@@ -31,11 +31,12 @@ for _module in (_base, _design, _reporting, _geometry, _serviceability, _impleme
     _module.APP_TABLE_DESCRIPTION = APP_TABLE_DESCRIPTION
 
 TABLE_COLUMNS_REQUIRED = [
-    "Member/Node/Case", "Station (m)", "FZ (kN)", "MX (kNm)", "MY (kNm)",
+    "Member/Node/Case", "FZ (kN)", "MX (kNm)", "MY (kNm)",
     "Length (m)", "Material", "HY (cm)", "HZ (cm)",
 ]
 TABLE_COLUMNS_RECOMMENDED = ["Name", "Story"]
 TABLE_COLUMNS_ELS = [
+    "Station (m)",
     "Support Condition", "As Bot Local (mm2)", "As Top Local (mm2)",
     "Bot Rebar Local", "Top Rebar Local",
 ]
@@ -90,15 +91,17 @@ def _build_sidebar_clean(self, parent):
     ttk.Combobox(params, textvariable=self.var_torsion_axis, values=["MX", "MY", "MZ", "Nenhuma"], state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
     ttk.Checkbutton(params, text="Reduzir para casos governantes", variable=self.var_reduce_cases).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=3)
     ttk.Checkbutton(params, text="Gerar resumo por viga", variable=self.var_summary).grid(row=8, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+    self._add_label_entry(params, "Combinações ELU", self.var_elu_cases, 9)
+    ttk.Label(params, text="Opcional: listas/intervalos, ex. 101-117 201-208", wraplength=330).grid(row=10, column=0, columnspan=2, sticky="w", padx=6)
     params.columnconfigure(1, weight=1)
 
     sls = ttk.LabelFrame(parent, text="3. Estados-limite de serviço")
     sls.pack(fill="x", pady=(0, 8))
-    ttk.Label(sls, text="Combinações ELS").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-    ttk.Entry(sls, textvariable=self.var_service_case).grid(row=0, column=1, sticky="ew", padx=6, pady=4)
-    ttk.Checkbutton(sls, text="Reconhecer automaticamente o regime", variable=self.var_service_auto_regime).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Regime base").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-    ttk.Combobox(sls, textvariable=self.var_service_regime, values=["Quase-permanente / longo prazo", "Frequente / repetida", "Característica / curta duração"], state="readonly").grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+    for row, label, variable in [(0, "ELS característica", self.var_sls_char_cases),
+                                  (1, "ELS frequente", self.var_sls_freq_cases),
+                                  (2, "ELS quase-permanente", self.var_sls_qp_cases)]:
+        ttk.Label(sls, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(sls, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=6, pady=4)
     ttk.Label(sls, text="Condição de apoio").grid(row=3, column=0, sticky="w", padx=6, pady=4)
     ttk.Combobox(sls, textvariable=self.var_support_condition, values=["Automática / por tabela", "Entre apoios (y0=yL=0)", "Consola - encastrada à esquerda", "Consola - encastrada à direita", "Encastre-encastre"], state="readonly").grid(row=3, column=1, sticky="ew", padx=6, pady=4)
     ttk.Label(sls, text="Histórico").grid(row=4, column=0, sticky="w", padx=6, pady=4)
@@ -114,7 +117,7 @@ def _build_sidebar_clean(self, parent):
     ttk.Combobox(sls, textvariable=self.var_service_cement, values=["S", "N", "R"], state="readonly", width=8).grid(row=12, column=1, sticky="ew", padx=6, pady=4)
     self._add_label_entry(sls, "h0 [mm] (0=automático)", self.var_service_h0, 13)
     ttk.Checkbutton(sls, text="Considerar retracção", variable=self.var_service_shrinkage).grid(row=14, column=0, columnspan=2, sticky="w", padx=6, pady=3)
-    ttk.Label(sls, text="Campo vazio: verifica todas as combinações ELS reconhecidas. Várias combinações podem ser separadas por ponto e vírgula.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=15, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+    ttk.Label(sls, text="Indique ELU e as combinações de cada regime ELS por listas/intervalos. Casos não classificados ficam excluídos. Para completar as verificações implementadas, preencha característica e quase-permanente.", style="Subtle.TLabel", wraplength=320, justify="left").grid(row=15, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
     sls.columnconfigure(1, weight=1)
 
     filters = ttk.LabelFrame(parent, text="4. Filtros")
@@ -185,7 +188,9 @@ def _build_instructions_clean(self, parent):
         "4. GEOMETRIA\n"
         "Secções rectangulares utilizam HY e HZ. Secções T podem ser definidas por BF e HF. Secções I podem ser introduzidas pelas dimensões dos banzos e da alma ou identificadas através das propriedades geométricas. Confirme sempre a geometria indicada no separador de envelopes antes de aceitar o cálculo.\n\n"
         "5. Estados Limites de Serviço - ELS\n"
-        "Deixe ‘Combinações ELS’ em branco para verificar todas as combinações reconhecidas. O programa determina governantes separados para fendilhação, flecha, tensão no aço e tensão no betão. A condição de apoio pode ser global ou definida na própria tabela.\n\n"
+        "Preencha os campos ELU e ELS característica, frequente e quase-permanente com números ou intervalos (ex.: 101-117 201-208). Cada combinação pertence a um único grupo; casos não classificados são excluídos. Não deduza o regime a partir de CQC. Característica: tensões no aço e no betão. Quase-permanente: fendilhação, flecha e controlo da hipótese de fluência linear. Frequente: resultados informativos nesta implementação. Para uma avaliação ELS completa, indique característica e quase-permanente. A condição de apoio pode ser global ou definida na tabela.\n\n"
+        "DADOS ELS INSUFICIENTES\n"
+        "Uma verificação incompleta não é uma falha resistente nem um resultado OK. Consulte as verificações individuais e o diagnóstico ELS por combinação. Para flecha, forneça Station (m) com posições físicas ao longo de todo o vão, incluindo apoios e extremos interiores: pelo menos três posições distintas, preferencialmente cinco ou mais. Identificadores de nós não são distâncias; não substitua as posições por uma distribuição uniforme inventada. Confirme comprimento, condição de apoio e armadura utilizada. Se só existirem esforços nas extremidades, mantenha a flecha como não verificada e complemente o diagrama ou verifique-a num modelo externo. Verificações já concluídas continuam identificadas separadamente.\n\n"
         "6. RESULTADOS\n"
         "‘OK’ indica cumprimento dos critérios implementados. ‘Falha’ identifica incumprimento. ‘Verificar’ assinala dados insuficientes, hipóteses que exigem confirmação ou situações fora do âmbito automático. A memória de cálculo contém os dados e resultados de auditoria; os relatórios em PDF destinam-se à apresentação.\n\n"
         "7. CONTROLO DE QUALIDADE\n"
@@ -219,6 +224,9 @@ def _load_df_clean(self, df: pd.DataFrame, source: str = ""):
         shear_axis=self.var_shear_axis.get().lower(),
         torsion_axis=self.var_torsion_axis.get().lower(),
     )
+    self.df_combination_groups = pd.DataFrame()
+    self._group_texts_for_run = None
+    self._selected_sls_groups = None
     self.df_calc_input = pd.DataFrame()
     self.df_results = pd.DataFrame()
     self.df_summary = pd.DataFrame()
@@ -355,3 +363,23 @@ __all__ = [
     "read_table_file", "_prepare_input_frames",
     "build_summary_by_member", "build_normative_notes",
 ]
+
+# Export all audit sheets in a single streaming pass.
+from .exporting import write_excel as _write_excel_single_pass
+BeamsEC2App._write_excel = _write_excel_single_pass
+from .exporting import export_dialog as _export_dialog
+BeamsEC2App.export_excel = lambda self: _export_dialog(self, 'xlsx')
+BeamsEC2App.export_pdf_report = lambda self: _export_dialog(self, 'pdf')
+
+# The public interface requires explicitly classified combinations.
+_validate_inputs_explicit_base = BeamsEC2App.validate_inputs
+def _validate_inputs_explicit(self):
+    error = _validate_inputs_explicit_base(self)
+    if error:
+        return error
+    if not self.var_elu_cases.get().strip():
+        return "Indique as combinações ELU por números ou intervalos."
+    if not any(v.get().strip() for v in (self.var_sls_char_cases, self.var_sls_freq_cases, self.var_sls_qp_cases)):
+        return "Indique pelo menos um grupo ELS. Para uma avaliação completa, preencha característica e quase-permanente."
+    return None
+BeamsEC2App.validate_inputs = _validate_inputs_explicit
