@@ -161,7 +161,7 @@ O BeamsEC2 é uma ferramenta de apoio ao dimensionamento. A interpretação do m
 
 ### Seleção das combinações (desenvolvimento a partir da v0.1.2)
 
-O campo opcional **Combinações ELU** aceita listas e intervalos, por exemplo `101-117 201-208`. O campo **Combinações ELS** aceita o mesmo formato e nomes completos separados por ponto e vírgula. Os números são comparados exatamente: selecionar `101` não seleciona `1101`.
+A interface utiliza grupos explícitos: indique ELU e ELS característica, frequente e quase-permanente por números ou intervalos. Casos não classificados ficam excluídos. Para completar as verificações implementadas, indique característica e quase-permanente. Consulte as instruções no programa e [o guia de utilização](docs/UTILIZACAO.md).
 
 Uma combinação explicitamente selecionada como ELS deixa de entrar no cálculo ELU. Sobreposições explícitas entre os dois grupos e números inexistentes são recusados antes de iniciar o cálculo. Com o campo ELU vazio, mantém-se a seleção original por nome, excluindo também os ELS indicados. Com o campo ELS vazio, mantém-se o reconhecimento original pelo nome; para combinações apenas numéricas, indique os grupos explicitamente.
 

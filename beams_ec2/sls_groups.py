@@ -104,4 +104,35 @@ def envelope(items):
     if missing:result['service_note']+=' Grupos em falta ou sem resultados: '+', '.join(sorted(set(missing)))+'.'
     if result['service_creep_status']=='Requer fluência não linear':
         result['service_note']+=' Tensão QP superior ao limite de fluência linear; rever modelo de fluência.'
+    pending, required = incomplete_diagnostics(items, missing)
+    result['service_pending_checks'] = pending
+    result['service_required_data'] = required
+    if pending:
+        result['service_note'] += ' Por concluir: ' + pending + '. ' + required
     return result
+
+
+def incomplete_diagnostics(items, missing):
+    """Explain incomplete checks without changing their engineering status."""
+    pending = []
+    actions = []
+    for group in sorted(set(missing)):
+        pending.append('Regime ' + group)
+        actions.append('Indicar combinações ' + group + ' com resultados importados para esta viga.')
+    names = {'stress':'Tensão no aço', 'concrete':'Tensão no betão', 'crack':'Fendilhação', 'deflection':'Flecha', 'creep':'Fluência linear'}
+    for item in items:
+        group = item.get('service_group')
+        checks = ('stress','concrete') if group=='ELS_CAR' else ('crack','deflection','creep') if group=='ELS_QP' else ()
+        for check in checks:
+            if item.get('service_'+check+'_status') != 'Dados insuficientes':
+                continue
+            case = str(item.get('service_combination',''))
+            pending.append(names[check] + ' [' + case + ']')
+            if item.get('service_axial_ratio',0) > .10:
+                actions.append('Verificar ELS com um modelo que considere o esforço normal relevante; acrescentar estações não resolve esta limitação.')
+            elif check == 'deflection':
+                source = str(item.get('service_diagram_source',''))
+                actions.append('Fornecer Station (m) com posições físicas, cobrindo o vão e os apoios, e pelo menos três posições distintas (preferencialmente cinco ou mais); confirmar comprimento e condição de apoio.' + (' Origem atual: '+source+'.' if source else ''))
+            else:
+                actions.append('Confirmar esforços, secção, materiais e armadura da combinação '+case+'; consultar a nota de cálculo por combinação.')
+    return '; '.join(dict.fromkeys(pending)), ' '.join(dict.fromkeys(actions))

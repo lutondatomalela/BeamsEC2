@@ -648,7 +648,7 @@ def _sls_audit_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
         "service_deflection_final_mm", "service_deflection_est_mm", "service_deflection_lim_mm",
         "service_deflection_limit", "service_crack_status", "service_deflection_status",
         "service_concrete_status", "service_stress_status", "service_creep_status",
-        "service_combination_creep", "service_status", "service_note",
+        "service_combination_creep", "service_status", "service_pending_checks", "service_required_data", "service_note",
     ]
     if results is None or results.empty:
         return pd.DataFrame()
@@ -1228,6 +1228,11 @@ def _calc_memory_df_advanced(results: pd.DataFrame) -> pd.DataFrame:
     if results is not None and not results.empty:
         for _, r in results.iterrows():
             common = {"Viga": _beam_label_labels(r), "Caso": r.get("case", ""), "Piso": r.get("story", ""), "Secção": r.get("section_geometry_summary", r.get("section_type", ""))}
+            if r.get('service_pending_checks'):
+                rows.extend([
+                    {**common, "Etapa": "Diagnóstico ELS", "Item": "Verificações por concluir", "Valor": r.get('service_pending_checks'), "Unidade": "-", "Critério/Referência": "Completude dos dados/modelo", "Estado/Nota": "Não verificadas"},
+                    {**common, "Etapa": "Diagnóstico ELS", "Item": "Dados ou ação necessários", "Valor": r.get('service_required_data', ''), "Unidade": "-", "Critério/Referência": "Completar ou verificar externamente", "Estado/Nota": "Verificar"},
+                ])
             rows.extend([
                 {**common, "Etapa": "ELS envelope", "Item": "Combinações verificadas", "Valor": r.get("service_combinations_list", ""), "Unidade": "-", "Critério/Referência": "NP EN 1992-1-1, Secção 7", "Estado/Nota": r.get("service_status", "")},
                 {**common, "Etapa": "ELS envelope", "Item": "Governantes wk / flecha", "Valor": f"{r.get('service_combination_crack','')} / {r.get('service_combination_deflection','')}", "Unidade": "-", "Critério/Referência": "7.3.4 / 7.4.3", "Estado/Nota": r.get("service_support_condition", "")},

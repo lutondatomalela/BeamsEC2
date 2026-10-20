@@ -8,7 +8,7 @@ import xlsxwriter
 
 
 def workbook_frames(app):
-    from . import design as d, serviceability as s
+    from . import design as d, advanced as s
     results = app.df_results if app.df_results is not None else pd.DataFrame()
     summary = app.df_summary if app.df_summary is not None else pd.DataFrame()
     geometry = results if not results.empty else app.df_env

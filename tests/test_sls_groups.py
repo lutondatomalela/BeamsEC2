@@ -89,3 +89,24 @@ class SLSGroupTests(unittest.TestCase):
         self.assertEqual(set(app.df_sls_combinations.service_group),{'ELS_CAR','ELS_FREQ','ELS_QP'})
         self.assertTrue(clean.station.isna().all())
         self.assertNotIn('303 (C)',results.service_governing_combination.iloc[0])
+
+class SLSDiagnosticTests(unittest.TestCase):
+    def test_missing_positions_only_explain_pending_deflection(self):
+        qp=response('ELS_QP','302',service_diagram_source='ordem das linhas distribuída no vão')
+        result=envelope([qp,response('ELS_CAR','304')])
+        self.assertEqual(result['service_status'],'Dados insuficientes')
+        self.assertEqual(result['service_crack_status'],'OK')
+        self.assertEqual(result['service_stress_status'],'OK')
+        self.assertEqual(result['service_pending_checks'],'Flecha [302]')
+        self.assertIn('Station (m)',result['service_required_data'])
+
+    def test_missing_group_and_model_limit_are_distinct(self):
+        result=envelope([response('ELS_QP','302',service_axial_ratio=.2)])
+        self.assertIn('ELS_CAR',result['service_pending_checks'])
+        self.assertIn('esforço normal',result['service_required_data'])
+        self.assertIn('não resolve',result['service_required_data'])
+
+    def test_complete_checks_have_no_pending_diagnostic(self):
+        result=envelope([response('ELS_QP','302'),response('ELS_CAR','304')])
+        self.assertEqual(result['service_status'],'OK')
+        self.assertEqual(result['service_pending_checks'],'')

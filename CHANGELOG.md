@@ -1,3 +1,11 @@
+# v0.1.3-dev4 — interface e diagnóstico ELS
+
+- Removidos os controlos do modo ELS anterior, reconhecimento automático e regime base da interface pública; classificação explícita por grupos.
+- Corrigida a sobreposição de campos no painel ELS.
+- Instruções atualizadas para os grupos atuais, posições físicas, resultados incompletos e verificação externa.
+- Diagnóstico por verificação/combinação, distinguindo grupos em falta, diagrama de flecha incompleto e limitação do modelo para esforço normal relevante.
+- Resultados concluídos conservados; incompletude não convertida em aprovação ou falha resistente. Diagnóstico incluído na auditoria XLSX e memória PDF.
+
 # v0.1.3-dev3 — exportação mais rápida
 
 - XLSX escrito numa única passagem, sem reabrir e regravar todas as folhas a cada extensão.
