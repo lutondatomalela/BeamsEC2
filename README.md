@@ -163,13 +163,13 @@ O BeamsEC2 é uma ferramenta de apoio ao dimensionamento. A interpretação do m
 
 A interface utiliza grupos explícitos: indique ELU e ELS característica, frequente e quase-permanente por números ou intervalos. Casos não classificados ficam excluídos. Para completar as verificações implementadas, indique característica e quase-permanente. Consulte as instruções no programa e [o guia de utilização](docs/UTILIZACAO.md).
 
-Uma combinação explicitamente selecionada como ELS deixa de entrar no cálculo ELU. Sobreposições explícitas entre os dois grupos e números inexistentes são recusados antes de iniciar o cálculo. Com o campo ELU vazio, mantém-se a seleção original por nome, excluindo também os ELS indicados. Com o campo ELS vazio, mantém-se o reconhecimento original pelo nome; para combinações apenas numéricas, indique os grupos explicitamente.
+As combinações ELS não entram no cálculo ELU. Sobreposições entre grupos e números inexistentes são recusados antes do cálculo. A interface exige seleção explícita; não deduz o regime a partir da numeração ou de CQC.
 
 A importação por nós continua disponível sem `Station`. A identificação `Member/Point (m)/Case` também é aceite, preservando rótulos como `+/- MY x=...`. Neste passo, estes rótulos são tratados como identificadores: não são convertidos em coordenadas. Os métodos de cálculo e as hipóteses ELS da versão original mantêm-se e serão objeto de validação própria.
 
 ### Grupos explícitos ELS
 
-Os campos **ELS característica**, **ELS frequente** e **ELS quase-permanente** ativam o modo explícito quando pelo menos um é preenchido. Neste modo, preencha também **Combinações ELU** e deixe vazio **ELS (modo anterior)**. Cada grupo aceita listas/intervalos. Os casos sem grupo ficam excluídos e a mesma combinação não pode pertencer a dois grupos. `CQC` não determina um regime ELS.
+Preencha **Combinações ELU** e os grupos **ELS característica**, **ELS frequente** e **ELS quase-permanente** aplicáveis. Cada grupo aceita listas/intervalos. Os casos sem grupo ficam excluídos e a mesma combinação não pode pertencer a dois grupos. `CQC` não determina um regime ELS.
 
 - Característica: verificações das tensões no aço e no betão.
 - Quase-permanente: fissuração, flecha final e controlo da hipótese de fluência linear.

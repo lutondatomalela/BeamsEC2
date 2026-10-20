@@ -14,6 +14,24 @@ class WindowsGroupTests(unittest.TestCase):
     def test_node_input_groups_and_exports(self):
         from beams_ec2.release import BeamsEC2App
         app=BeamsEC2App();app.withdraw()
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        labels=[]
+        for widget in descendants(app):
+            if widget.winfo_class() in ('TLabel','TLabelframe','TCheckbutton'):
+                labels.append(str(widget.cget('text')))
+        self.assertFalse(any('modo anterior' in text.lower() for text in labels))
+        panel=next(w for w in descendants(app) if w.winfo_class()=='TLabelframe' and str(w.cget('text'))=='3. Estados-limite de serviço')
+        occupied=[]
+        for widget in panel.winfo_children():
+            info=widget.grid_info()
+            if info:
+                position=(info['row'],info['column'])
+                self.assertNotIn(position,occupied,'Overlapping ELS controls')
+                occupied.append(position)
+
         failures=[];completed=[]
         def fail(*args,**kwargs):
             failures.append(str(args));app.quit()

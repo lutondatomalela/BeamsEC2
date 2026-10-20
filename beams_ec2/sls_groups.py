@@ -124,6 +124,10 @@ def incomplete_diagnostics(items, missing):
         group = item.get('service_group')
         checks = ('stress','concrete') if group=='ELS_CAR' else ('crack','deflection','creep') if group=='ELS_QP' else ()
         for check in checks:
+            if check == 'creep' and item.get('service_creep_status') == 'Requer fluência não linear':
+                pending.append('Modelo de fluência [' + str(item.get('service_combination', '')) + ']')
+                actions.append('Verificar com um modelo de fluência não linear adequado à tensão de compressão quase-permanente.')
+                continue
             if item.get('service_'+check+'_status') != 'Dados insuficientes':
                 continue
             case = str(item.get('service_combination',''))

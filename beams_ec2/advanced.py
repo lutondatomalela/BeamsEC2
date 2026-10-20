@@ -577,6 +577,8 @@ def _apply_serviceability_advanced(app, results: pd.DataFrame) -> pd.DataFrame:
         if not groups:
             out.at[idx, "service_status"] = "Dados insuficientes"
             out.at[idx, "service_note"] = "Sem combinação ELS correspondente; resultado de serviço não validado."
+            out.at[idx, "service_pending_checks"] = "Combinações ELS da viga"
+            out.at[idx, "service_required_data"] = "Importar esforços ELS desta viga e classificar as combinações nos grupos característica e quase-permanente."
             out.at[idx, "service_case_source"] = source_note
             out.at[idx, "service_diagram_quality"] = "Insuficiente"
             if str(out.at[idx, "status"] if "status" in out.columns else "OK") == "OK":
